@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emoji Blaster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #191825; --panel: #232134; --amber: #FFB627;
+    --teal: #00A896; --coral: #FF6B6B; --paper: #F4F1EA;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--ink); color: var(--paper); font-family: 'Inter', sans-serif; overflow-x: hidden; }
+  .arcade { position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 20px 64px; }
+  .marquee { position: absolute; inset: 0; overflow: hidden; pointer-events: none; opacity: 0.35; }
+  .drop { position: absolute; top: -60px; font-size: 34px; animation: fall linear infinite; }
+  @keyframes fall { to { transform: translateY(110vh) rotate(20deg); } }
+  header { position: relative; z-index: 2; text-align: center; margin-bottom: 44px; }
+  .eyebrow { font-weight: 700; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--teal); margin: 0 0 10px; }
+  h1 { font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: clamp(42px, 9vw, 84px); margin: 0; letter-spacing: -0.01em; line-height: 0.95; text-shadow: 4px 4px 0 var(--coral); }
+  h1 span { display: inline-block; animation: bob 2.4s ease-in-out infinite; }
+  h1 span:nth-child(2) { animation-delay: 0.15s; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+  .tagline { margin-top: 14px; font-size: 16px; color: #C8C4D8; font-weight: 600; }
+  .modes { position: relative; z-index: 2; display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; max-width: 720px; }
+  .card { background: var(--panel); border: 3px solid transparent; border-radius: 20px; padding: 28px 26px; width: 280px; text-align: left; cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease; font-family: inherit; color: inherit; }
+  .card:hover, .card:focus-visible { transform: translateY(-4px); border-color: var(--amber); outline: none; }
+  .card .icon { font-size: 40px; margin-bottom: 14px; display: block; }
+  .card h2 { font-family: 'Baloo 2', sans-serif; font-size: 24px; margin: 0 0 8px; }
+  .card p { margin: 0; font-size: 14px; color: #ABA6C2; line-height: 1.5; }
+  .card.solo .icon { color: var(--amber); }
+  .card.multi .icon { color: var(--teal); }
+</style>
+</head>
+<body>
+<div class="arcade">
+  <div class="marquee" id="marquee"></div>
+  <header>
+    <p class="eyebrow">Type Fast. Match Faster.</p>
+    <h1><span>Emoji</span> <span>Blaster</span></h1>
+    <p class="tagline">Type the keyword before it lands.</p>
+  </header>
+  <div class="modes">
+    <button class="card solo" id="soloBtn">
+      <span class="icon">🎯</span>
+      <h2>Solo</h2>
+      <p>Play alone across three difficulty levels — classic, double-match, and shared-keyword mode.</p>
+    </button>
+    <button class="card multi" id="multiBtn">
+      <span class="icon">👥</span>
+      <h2>Multiplayer</h2>
+      <p>Create or join a room with a code and race friends to the answer.</p>
+    </button>
+  </div>
+</div>
+<script>
+  const emojis = ['😡','🍎','🍌','🤣','👏','😳','😎','🤙','💪','💯','🥶','😱'];
+  const marquee = document.getElementById('marquee');
+  for (let i = 0; i < 14; i++) {
+    const el = document.createElement('span');
+    el.className = 'drop';
+    el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    el.style.left = Math.random() * 100 + '%';
+    el.style.animationDuration = (6 + Math.random() * 6) + 's';
+    el.style.animationDelay = (Math.random() * 6) + 's';
+    marquee.appendChild(el);
+  }
+  document.getElementById('soloBtn').addEventListener('click', () => window.location.href = 'https://emoji-blaster.onrender.com/game.html');
+  document.getElementById('multiBtn').addEventListener('click', () => window.location.href = 'multiplayer.html');
+</script>
+</body>
+</html>
