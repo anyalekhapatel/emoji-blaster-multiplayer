@@ -89,6 +89,12 @@ input:focus { border-color: var(--amber); }
 
 .btn:hover { transform: translateY(-2px); }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-primary { background: var(--coral); color: var(--ink); }
 .btn-secondary { background: var(--teal); color: var(--ink); }
 

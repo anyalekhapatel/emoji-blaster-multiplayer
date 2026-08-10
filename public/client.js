@@ -77,6 +77,7 @@ const roomCodeSmall = document.getElementById("room-code-small");
 const lobbyMode = document.getElementById("lobby-mode");
 const modeSmall = document.getElementById("mode-small");
 const playerList = document.getElementById("player-list");
+const lobbyStatus = document.getElementById("lobby-status");
 const readyBtn = document.getElementById("ready-btn");
 
 let currentRoomCode = null;
@@ -97,7 +98,7 @@ socket.on("room-created", ({ code, mode }) => enterRoom(code, mode));
 
 socket.on("room-joined", ({ code, mode }) => enterRoom(code, mode));
 
-socket.on("lobby-update", ({ players }) => {
+socket.on("lobby-update", ({ players, gameInProgress, minPlayers }) => {
   playerList.innerHTML = "";
   players.forEach(p => {
     const li = document.createElement("li");
@@ -110,6 +111,23 @@ socket.on("lobby-update", ({ players }) => {
     li.appendChild(badge);
     playerList.appendChild(li);
   });
+
+  if (gameInProgress) {
+    lobbyStatus.textContent = "A game is in progress — you'll be able to ready up once it ends.";
+    readyBtn.disabled = true;
+  } else if (players.length < minPlayers) {
+    lobbyStatus.textContent = `Waiting for at least ${minPlayers} players to join…`;
+    readyBtn.disabled = false;
+  } else {
+    lobbyStatus.textContent = "";
+    readyBtn.disabled = false;
+  }
+});
+
+socket.on("room-reset", () => {
+  iAmReady = false;
+  readyBtn.textContent = "Ready Up";
+  showScreen("lobby");
 });
 
 readyBtn.addEventListener("click", () => {

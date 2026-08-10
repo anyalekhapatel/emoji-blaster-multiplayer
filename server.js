@@ -19,6 +19,8 @@ const RETRY_LIMIT = 25;        // Level 3: re-roll if a random pair shares no ke
 const LEVEL2_REQUIRED = 2;     // Level 2: distinct correct keywords needed per round
 const WIN_SCORE = 10;          // first player to reach this score ends the game
 const MODES = ["classic", "sync"];
+const MIN_PLAYERS = 2;         // a room needs at least this many ready players to start
+const REMATCH_DELAY_MS = 4000; // pause on the Game Over screen before the room resets
 
 let dbConnected = false;
 
@@ -77,12 +79,18 @@ function broadcastScoreboard(code) {
 function broadcastLobby(code) {
   const room = rooms[code];
   if (!room) return;
-  io.to(code).emit("lobby-update", { players: getPlayerList(room), level: room.level });
+  io.to(code).emit("lobby-update", {
+    players: getPlayerList(room),
+    level: room.level,
+    mode: room.mode,
+    minPlayers: MIN_PLAYERS,
+    gameInProgress: room.started && !room.finished,
+  });
 }
 
 function allPlayersReady(room) {
   const players = Array.from(room.players.values());
-  return players.length > 0 && players.every((p) => p.ready);
+  return players.length >= MIN_PLAYERS && players.every((p) => p.ready);
 }
 
 function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -112,6 +120,33 @@ function flushCurrentRound(room, completedBy, timeToCorrectMs) {
   room.currentRound = null;
 }
 
+// Puts a room back into a fresh pre-game lobby state: scores and ready
+// flags cleared, nobody spawned in. Lets both the just-finished players and
+// anyone who joined mid-game (and was held in the lobby) ready up together
+// for another round without needing a new room code.
+function resetRoomForNextGame(code) {
+  const room = rooms[code];
+  if (!room) return;
+
+  clearTimeout(room.timer);
+  room.started = false;
+  room.finished = false;
+  room.currentEmoji = null;
+  room.targetKeywords = [];
+  room.foundKeywords = [];
+  room.roundGuesses = new Map();
+  room.answered = false;
+  room.startedAt = null;
+  room.roundStartedAt = null;
+  room.sessionDoc = null;
+  room.currentRound = null;
+  room.players.forEach((p) => { p.score = 0; p.ready = false; });
+
+  io.to(code).emit("room-reset");
+  broadcastLobby(code);
+  broadcastScoreboard(code);
+}
+
 // Ends the room's game once a player reaches WIN_SCORE. Returns true if the
 // game just ended (caller should not schedule another round in that case).
 function checkGameOver(code) {
@@ -125,6 +160,7 @@ function checkGameOver(code) {
   clearTimeout(room.timer);
   io.to(code).emit("game-over", { winner: winner.username, scoreboard: getScoreboard(room) });
   endGame(code, "score-limit");
+  setTimeout(() => resetRoomForNextGame(code), REMATCH_DELAY_MS);
   return true;
 }
 
@@ -387,13 +423,9 @@ io.on("connection", (socket) => {
     socket.emit("room-joined", { code, level: room.level, mode: room.mode });
     broadcastLobby(code);
     broadcastScoreboard(code);
-
-    if (room.finished) {
-      socket.emit("game-over", { winner: null, scoreboard: getScoreboard(room) });
-    } else if (room.started && room.currentEmoji) {
-      socket.emit("game-started", { level: room.level, mode: room.mode });
-      socket.emit("emoji-spawn", { emoji: room.currentEmoji, fallDuration: FALL_DURATION_MS, level: room.level });
-    }
+    // Note: joiners always land in the lobby, even if a round is currently
+    // live in this room — they wait there (see gameInProgress in
+    // lobby-update) until the room resets for the next game.
   });
 
   socket.on("toggle-ready", () => {
