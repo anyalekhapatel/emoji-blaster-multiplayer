@@ -18,6 +18,12 @@
 
     <input id="username-input" type="text" placeholder="Your name" maxlength="16" autocomplete="off">
 
+    <p class="hint">Mode (used when you create a room)</p>
+    <div class="button-row" id="mode-select">
+      <button type="button" id="mode-classic-btn" class="btn btn-mode active" data-mode="classic">Race<br><span class="mode-desc">First correct guess wins</span></button>
+      <button type="button" id="mode-sync-btn" class="btn btn-mode" data-mode="sync">Sync<br><span class="mode-desc">Both players must match</span></button>
+    </div>
+
     <div class="button-row">
       <button id="create-room-btn" class="btn btn-primary">Create Room</button>
     </div>
@@ -37,6 +43,7 @@
     <h1 class="display">Room</h1>
     <div id="room-code-display" class="room-code"></div>
     <p class="hint">Share this code so others can join</p>
+    <p id="lobby-mode" class="mode-badge"></p>
 
     <ul id="player-list" class="player-list"></ul>
 
@@ -48,6 +55,7 @@
   <section id="screen-game" class="screen hidden">
     <div id="game-hud">
       <div id="room-code-small"></div>
+      <div id="mode-small"></div>
     </div>
 
     <div id="fall-zone">
@@ -58,9 +66,24 @@
     <input id="guess-input" type="text" placeholder="Type the keyword and press Enter…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <aside id="scoreboard">
-      <h2>Scoreboard</h2>
+      <h2>Scoreboard <span class="hint">(first to 10 wins)</span></h2>
       <ol id="scoreboard-list"></ol>
     </aside>
+  </section>
+
+  <!-- GAME OVER -->
+  <section id="screen-gameover" class="screen hidden">
+    <h1 class="display">Game Over</h1>
+    <p id="gameover-winner" class="subtitle"></p>
+
+    <aside id="gameover-scoreboard">
+      <h2>Final Score</h2>
+      <ol id="gameover-scoreboard-list"></ol>
+    </aside>
+
+    <div class="button-row">
+      <button id="play-again-btn" class="btn btn-primary">Back to Home</button>
+    </div>
   </section>
 
 </div>

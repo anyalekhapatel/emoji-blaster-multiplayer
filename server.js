@@ -17,6 +17,8 @@ app.use(express.static(path.join(__dirname, "public")));
 const FALL_DURATION_MS = 8000; // how long an emoji is "live" before it's a miss
 const RETRY_LIMIT = 25;        // Level 3: re-roll if a random pair shares no keyword
 const LEVEL2_REQUIRED = 2;     // Level 2: distinct correct keywords needed per round
+const WIN_SCORE = 10;          // first player to reach this score ends the game
+const MODES = ["classic", "sync"];
 
 let dbConnected = false;
 
@@ -24,10 +26,15 @@ let dbConnected = false;
 // rooms[code] = {
 //   players: Map(socketId -> { username, score, ready }),
 //   level: 1 | 2 | 3,
+//   mode: "classic" | "sync",  // classic: first correct guess wins the round.
+//                               // sync: round only clears once every player has
+//                               // submitted the SAME valid keyword.
 //   currentEmoji: string | [string, string],
 //   targetKeywords: string[],
 //   foundKeywords: string[],   // Level 2 progress this round
+//   roundGuesses: Map(socketId -> normalizedGuess),  // sync mode progress this round
 //   answered: bool,
+//   finished: bool,            // true once a player has hit WIN_SCORE
 //   timer: Timeout | null,
 //   started: bool,
 //   startedAt: number | null,
@@ -105,12 +112,29 @@ function flushCurrentRound(room, completedBy, timeToCorrectMs) {
   room.currentRound = null;
 }
 
+// Ends the room's game once a player reaches WIN_SCORE. Returns true if the
+// game just ended (caller should not schedule another round in that case).
+function checkGameOver(code) {
+  const room = rooms[code];
+  if (!room || room.finished) return false;
+
+  const winner = Array.from(room.players.values()).find((p) => p.score >= WIN_SCORE);
+  if (!winner) return false;
+
+  room.finished = true;
+  clearTimeout(room.timer);
+  io.to(code).emit("game-over", { winner: winner.username, scoreboard: getScoreboard(room) });
+  endGame(code, "score-limit");
+  return true;
+}
+
 function spawnEmoji(code) {
   const room = rooms[code];
-  if (!room || room.players.size === 0) return;
+  if (!room || room.players.size === 0 || room.finished) return;
 
   room.answered = false;
   room.foundKeywords = [];
+  room.roundGuesses = new Map();
   room.roundStartedAt = Date.now();
 
   let emojiForRound, targetKeywords;
@@ -171,8 +195,8 @@ function startGame(code) {
     rounds: [],
   });
 
-  io.to(code).emit("game-started", { level: room.level });
-  console.log(`[analytics] session-start`, { code, level: room.level, startedAt: room.startedAt });
+  io.to(code).emit("game-started", { level: room.level, mode: room.mode });
+  console.log(`[analytics] session-start`, { code, level: room.level, mode: room.mode, startedAt: room.startedAt });
   spawnEmoji(code);
 }
 
@@ -196,16 +220,145 @@ function endGame(code, reason) {
   }
 }
 
+// Classic mode: first player to land any unclaimed valid keyword wins the
+// point (Level 2 still requires LEVEL2_REQUIRED distinct keywords total).
+function handleClassicGuess(code, room, socket, player, normalized, elapsedMs) {
+  const isValidUnclaimed = room.targetKeywords.some(
+    k => k.toLowerCase() === normalized && !room.foundKeywords.includes(k)
+  );
+
+  if (room.currentRound) {
+    room.currentRound.guesses.push({
+      username: player ? player.username : "?",
+      guess: normalized,
+      correct: isValidUnclaimed,
+      elapsedMs,
+    });
+  }
+  console.log(`[analytics] guess-attempt`, {
+    code, username: player ? player.username : "?", guess: normalized,
+    correct: isValidUnclaimed, level: room.level, mode: room.mode, elapsedMs,
+  });
+
+  if (!isValidUnclaimed) {
+    socket.emit("guess-wrong");
+    return;
+  }
+
+  const matchedKeyword = room.targetKeywords.find(
+    k => k.toLowerCase() === normalized && !room.foundKeywords.includes(k)
+  );
+  room.foundKeywords.push(matchedKeyword);
+
+  const requiredCount = room.level === 2 ? LEVEL2_REQUIRED : 1;
+  const roundComplete = room.foundKeywords.length >= requiredCount;
+
+  if (player) player.score += 1;
+  broadcastScoreboard(code);
+
+  if (roundComplete) {
+    room.answered = true;
+    clearTimeout(room.timer);
+
+    flushCurrentRound(room, player ? player.username : "?", elapsedMs);
+
+    io.to(code).emit("emoji-correct", {
+      emoji: room.currentEmoji,
+      username: player ? player.username : "?",
+      guess: normalized,
+    });
+
+    if (!checkGameOver(code)) {
+      setTimeout(() => spawnEmoji(code), 700); // brief pause before next round
+    }
+  } else {
+    io.to(code).emit("keyword-found", {
+      username: player ? player.username : "?",
+      guess: normalized,
+      remaining: requiredCount - room.foundKeywords.length,
+    });
+  }
+}
+
+// Sync mode: every player must submit the SAME valid keyword before the
+// round clears. Each submission overwrites that player's standing guess for
+// the round; a mismatch across players resets everyone's guess so they can
+// re-sync instead of getting stuck racing each other.
+function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
+  const matchedKeyword = room.targetKeywords.find(k => k.toLowerCase() === normalized);
+
+  if (room.currentRound) {
+    room.currentRound.guesses.push({
+      username: player ? player.username : "?",
+      guess: normalized,
+      correct: !!matchedKeyword,
+      elapsedMs,
+    });
+  }
+  console.log(`[analytics] guess-attempt`, {
+    code, username: player ? player.username : "?", guess: normalized,
+    correct: !!matchedKeyword, level: room.level, mode: room.mode, elapsedMs,
+  });
+
+  if (!matchedKeyword) {
+    socket.emit("guess-wrong");
+    return;
+  }
+
+  room.roundGuesses.set(socket.id, normalized);
+
+  const playerIds = Array.from(room.players.keys());
+  const guesses = playerIds.map(id => room.roundGuesses.get(id));
+  const everyoneGuessed = guesses.every(g => g !== undefined);
+
+  if (!everyoneGuessed) {
+    io.to(code).emit("sync-waiting", {
+      username: player ? player.username : "?",
+      waitingOn: playerIds.length - guesses.filter(g => g !== undefined).length,
+    });
+    return;
+  }
+
+  const allMatch = guesses.every(g => g === guesses[0]);
+
+  if (!allMatch) {
+    room.roundGuesses = new Map();
+    io.to(code).emit("sync-mismatch");
+    return;
+  }
+
+  room.players.forEach(p => { p.score += 1; });
+  broadcastScoreboard(code);
+
+  room.answered = true;
+  clearTimeout(room.timer);
+
+  flushCurrentRound(room, "everyone", elapsedMs);
+
+  io.to(code).emit("emoji-correct", {
+    emoji: room.currentEmoji,
+    username: "Everyone",
+    guess: normalized,
+  });
+
+  if (!checkGameOver(code)) {
+    setTimeout(() => spawnEmoji(code), 700);
+  }
+}
+
 io.on("connection", (socket) => {
-  socket.on("create-room", ({ username, level }) => {
+  socket.on("create-room", ({ username, level, mode }) => {
     const code = generateRoomCode();
     rooms[code] = {
       players: new Map(),
       level: [1, 2, 3].includes(level) ? level : 1,
+      mode: MODES.includes(mode) ? mode : "classic",
       currentEmoji: null,
       targetKeywords: [],
       foundKeywords: [],
+      roundGuesses: new Map(),
       answered: false,
+      finished: false,
       timer: null,
       started: false,
       startedAt: null,
@@ -216,7 +369,7 @@ io.on("connection", (socket) => {
     rooms[code].players.set(socket.id, { username, score: 0, ready: false });
     socket.join(code);
     socket.data.roomCode = code;
-    socket.emit("room-created", { code, level: rooms[code].level });
+    socket.emit("room-created", { code, level: rooms[code].level, mode: rooms[code].mode });
     broadcastLobby(code);
     broadcastScoreboard(code);
   });
@@ -231,12 +384,14 @@ io.on("connection", (socket) => {
     room.players.set(socket.id, { username, score: 0, ready: false });
     socket.join(code);
     socket.data.roomCode = code;
-    socket.emit("room-joined", { code, level: room.level });
+    socket.emit("room-joined", { code, level: room.level, mode: room.mode });
     broadcastLobby(code);
     broadcastScoreboard(code);
 
-    if (room.started && room.currentEmoji) {
-      socket.emit("game-started", { level: room.level });
+    if (room.finished) {
+      socket.emit("game-over", { winner: null, scoreboard: getScoreboard(room) });
+    } else if (room.started && room.currentEmoji) {
+      socket.emit("game-started", { level: room.level, mode: room.mode });
       socket.emit("emoji-spawn", { emoji: room.currentEmoji, fallDuration: FALL_DURATION_MS, level: room.level });
     }
   });
@@ -259,64 +414,16 @@ io.on("connection", (socket) => {
   socket.on("submit-guess", ({ guess }) => {
     const code = socket.data.roomCode;
     const room = rooms[code];
-    if (!room || !room.started || room.answered || !room.currentEmoji) return;
+    if (!room || !room.started || room.answered || !room.currentEmoji || room.finished) return;
 
     const normalized = (guess || "").trim().toLowerCase();
     const player = room.players.get(socket.id);
     const elapsedMs = room.roundStartedAt ? Date.now() - room.roundStartedAt : null;
 
-    const isValidUnclaimed = room.targetKeywords.some(
-      k => k.toLowerCase() === normalized && !room.foundKeywords.includes(k)
-    );
-
-    if (room.currentRound) {
-      room.currentRound.guesses.push({
-        username: player ? player.username : "?",
-        guess: normalized,
-        correct: isValidUnclaimed,
-        elapsedMs,
-      });
-    }
-    console.log(`[analytics] guess-attempt`, {
-      code, username: player ? player.username : "?", guess: normalized,
-      correct: isValidUnclaimed, level: room.level, elapsedMs,
-    });
-
-    if (!isValidUnclaimed) {
-      socket.emit("guess-wrong");
-      return;
-    }
-
-    const matchedKeyword = room.targetKeywords.find(
-      k => k.toLowerCase() === normalized && !room.foundKeywords.includes(k)
-    );
-    room.foundKeywords.push(matchedKeyword);
-
-    const requiredCount = room.level === 2 ? LEVEL2_REQUIRED : 1;
-    const roundComplete = room.foundKeywords.length >= requiredCount;
-
-    if (player) player.score += 1;
-    broadcastScoreboard(code);
-
-    if (roundComplete) {
-      room.answered = true;
-      clearTimeout(room.timer);
-
-      flushCurrentRound(room, player ? player.username : "?", elapsedMs);
-
-      io.to(code).emit("emoji-correct", {
-        emoji: room.currentEmoji,
-        username: player ? player.username : "?",
-        guess: normalized,
-      });
-
-      setTimeout(() => spawnEmoji(code), 700); // brief pause before next round
+    if (room.mode === "sync") {
+      handleSyncGuess(code, room, socket, player, normalized, elapsedMs);
     } else {
-      io.to(code).emit("keyword-found", {
-        username: player ? player.username : "?",
-        guess: normalized,
-        remaining: requiredCount - room.foundKeywords.length,
-      });
+      handleClassicGuess(code, room, socket, player, normalized, elapsedMs);
     }
   });
 

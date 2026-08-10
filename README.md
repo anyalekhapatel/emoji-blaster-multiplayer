@@ -54,15 +54,29 @@ server process that stays running.
    persist game session analytics to MongoDB — without it, sessions just
    log to the console.
 
+## Multiplayer modes
+
+Chosen by the room creator when they create a room (joiners inherit it):
+
+- **Race** — first player to land a correct keyword wins the point.
+- **Sync** — the round only clears once every player in the room has
+  submitted the *same* valid keyword. A mismatch resets everyone's guess
+  for that round so players can re-sync. Points are awarded to everyone
+  when the round clears.
+
+Either mode ends the game as soon as a player reaches 10 points, showing a
+"Game Over" screen with the winner and final scoreboard.
+
 ## Known limitations (current version)
 
-- Multiplayer only recreates Level 1's mechanic (single falling emoji,
-  first correct keyword wins the point) — Levels 2 and 3's mechanics
-  aren't ported to multiplayer yet, and Level 3 rooms will error given the
-  missing `sharedKeywords` export noted above.
+- Both multiplayer modes only recreate Level 1's mechanic (single falling
+  emoji, one keyword per round) — Levels 2 and 3's mechanics aren't ported
+  to multiplayer yet, and Level 3 rooms will error given the missing
+  `sharedKeywords` export noted above.
 - Room data is in-memory only — if the server restarts, all active rooms
   and scores are lost.
 - No reconnect/rejoin-with-same-score handling if a player's connection
-  drops mid-game.
+  drops mid-game (in Sync mode, a disconnect mid-round can leave the
+  remaining player's guess stuck waiting until they submit again).
 - The solo game's sound effects are in `public/media/`, but `game.js`
   loads them from a `sounds/` path — audio silently fails to play.

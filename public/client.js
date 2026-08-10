@@ -6,6 +6,12 @@ const screens = {
   landing: document.getElementById("screen-landing"),
   lobby: document.getElementById("screen-lobby"),
   game: document.getElementById("screen-game"),
+  gameover: document.getElementById("screen-gameover"),
+};
+
+const MODE_LABELS = {
+  classic: "Race — first correct guess wins",
+  sync: "Sync — everyone must type the same keyword",
 };
 
 function showScreen(name) {
@@ -31,10 +37,21 @@ function getUsername() {
   return name;
 }
 
+// ---- Mode select (only matters for room creation; joiners inherit the room's mode) ----
+const modeButtons = Array.from(document.querySelectorAll(".btn-mode"));
+let selectedMode = "classic";
+
+modeButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    selectedMode = btn.dataset.mode;
+    modeButtons.forEach(b => b.classList.toggle("active", b === btn));
+  });
+});
+
 createRoomBtn.addEventListener("click", () => {
   const username = getUsername();
   if (!username) return;
-  socket.emit("create-room", { username });
+  socket.emit("create-room", { username, mode: selectedMode });
 });
 
 joinRoomBtn.addEventListener("click", () => {
@@ -57,25 +74,28 @@ socket.on("join-error", ({ message }) => {
 // ---- Lobby ----
 const roomCodeDisplay = document.getElementById("room-code-display");
 const roomCodeSmall = document.getElementById("room-code-small");
+const lobbyMode = document.getElementById("lobby-mode");
+const modeSmall = document.getElementById("mode-small");
 const playerList = document.getElementById("player-list");
 const readyBtn = document.getElementById("ready-btn");
 
 let currentRoomCode = null;
+let currentMode = "classic";
 let iAmReady = false;
 
-socket.on("room-created", ({ code }) => {
+function enterRoom(code, mode) {
   currentRoomCode = code;
+  currentMode = mode || "classic";
   roomCodeDisplay.textContent = code;
   roomCodeSmall.textContent = code;
+  lobbyMode.textContent = MODE_LABELS[currentMode] || currentMode;
+  modeSmall.textContent = MODE_LABELS[currentMode] || currentMode;
   showScreen("lobby");
-});
+}
 
-socket.on("room-joined", ({ code }) => {
-  currentRoomCode = code;
-  roomCodeDisplay.textContent = code;
-  roomCodeSmall.textContent = code;
-  showScreen("lobby");
-});
+socket.on("room-created", ({ code, mode }) => enterRoom(code, mode));
+
+socket.on("room-joined", ({ code, mode }) => enterRoom(code, mode));
 
 socket.on("lobby-update", ({ players }) => {
   playerList.innerHTML = "";
@@ -132,6 +152,15 @@ socket.on("emoji-miss", () => {
   roundFeedback.textContent = "Missed it — next one incoming…";
 });
 
+socket.on("sync-waiting", ({ username, waitingOn }) => {
+  const who = waitingOn === 1 ? "1 player" : `${waitingOn} players`;
+  roundFeedback.textContent = `${username} locked in "${guessInput.value || "a guess"}" — waiting on ${who}…`;
+});
+
+socket.on("sync-mismatch", () => {
+  roundFeedback.textContent = "Didn't match — everyone try again!";
+});
+
 socket.on("scoreboard", (entries) => {
   scoreboardList.innerHTML = "";
   entries.forEach(p => {
@@ -139,6 +168,26 @@ socket.on("scoreboard", (entries) => {
     li.textContent = `${p.username} — ${p.score}`;
     scoreboardList.appendChild(li);
   });
+});
+
+// ---- Game over ----
+const gameoverWinner = document.getElementById("gameover-winner");
+const gameoverScoreboardList = document.getElementById("gameover-scoreboard-list");
+const playAgainBtn = document.getElementById("play-again-btn");
+
+socket.on("game-over", ({ winner, scoreboard }) => {
+  gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
+  gameoverScoreboardList.innerHTML = "";
+  scoreboard.forEach(p => {
+    const li = document.createElement("li");
+    li.textContent = `${p.username} — ${p.score}`;
+    gameoverScoreboardList.appendChild(li);
+  });
+  showScreen("gameover");
+});
+
+playAgainBtn.addEventListener("click", () => {
+  window.location.reload();
 });
 
 function submitGuess() {
