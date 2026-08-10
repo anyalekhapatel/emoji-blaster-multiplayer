@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emoji Blaster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #191825;
+    --panel: #232134;
+    --amber: #FFB627;
+    --coral: #FF6B6B;
+    --paper: #F4F1EA;
+    --teal: #00A896;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'Inter', sans-serif;
+    overflow: hidden;
+  }
+
+  h1, h2, .display {
+    font-family: 'Baloo 2', sans-serif;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  #hud {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 2px solid #2f2c46;
+  }
+
+  #score-hud {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--amber);
+  }
+
+  #lives-hud {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--coral);
+  }
+
+  #game-wrap {
+    position: relative;
+    flex: 1;
+    background: var(--ink);
+  }
+
+  #game-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  #input-row {
+    padding: 16px 20px;
+    background: var(--panel);
+    border-top: 2px solid #2f2c46;
+  }
+
+  #type-input {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 1.2rem;
+    font-family: 'Inter', sans-serif;
+    border-radius: 10px;
+    border: 2px solid var(--amber);
+    background: var(--ink);
+    color: var(--paper);
+    outline: none;
+  }
+
+  #type-input:focus {
+    border-color: var(--coral);
+  }
+
+  #type-input.hidden { display: none; }
+
+  #dual-input-row {
+    display: flex;
+    gap: 12px;
+  }
+
+  #dual-input-row.hidden { display: none; }
+
+  .dual-input {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 1.2rem;
+    font-family: 'Inter', sans-serif;
+    border-radius: 10px;
+    border: 2px solid var(--amber);
+    background: var(--ink);
+    color: var(--paper);
+    outline: none;
+    transition: opacity 0.25s, transform 0.25s;
+  }
+
+  .dual-input:focus {
+    border-color: var(--coral);
+  }
+
+  .dual-input.solved {
+    opacity: 0;
+    transform: scale(0.9);
+    pointer-events: none;
+    border-color: var(--teal);
+  }
+
+  .overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(25, 24, 37, 0.96);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .overlay.hidden { display: none; }
+
+  .overlay h1 {
+    color: var(--amber);
+    font-size: 2.2rem;
+    margin: 0;
+  }
+
+  .level-btn, #restart-btn {
+    font-family: 'Baloo 2', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    padding: 14px 28px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    background: var(--coral);
+    color: var(--ink);
+    transition: transform 0.15s;
+  }
+
+  .level-btn:hover, #restart-btn:hover {
+    transform: translateY(-2px);
+  }
+
+  .level-btn small, #restart-btn small {
+    display: block;
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    font-size: 0.8rem;
+    margin-top: 4px;
+  }
+
+  #final-score {
+    color: var(--amber);
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="hud">
+    <div id="score-hud">⭐ <span id="score-value">0</span></div>
+    <div id="lives-hud">🛡️ <span id="lives-value">3</span></div>
+  </div>
+
+  <div id="game-wrap">
+    <canvas id="game-canvas"></canvas>
+
+    <div id="level-select" class="overlay">
+      <h1>Emoji Blaster</h1>
+      <button class="level-btn" data-level="1">Level 1<small>One keyword, one emoji</small></button>
+      <button class="level-btn" data-level="2">Level 2<small>Two keywords, one emoji</small></button>
+      <button class="level-btn" data-level="3">Level 3<small>Two emoji, shared keyword</small></button>
+    </div>
+
+    <div id="game-over" class="overlay hidden">
+      <h1>Game Over</h1>
+      <div>Score: <span id="final-score">0</span></div>
+      <button id="restart-btn">Play Again</button>
+    </div>
+  </div>
+
+  <div id="input-row">
+    <input id="type-input" type="text" placeholder="Type the keyword and press Enter…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <div id="dual-input-row" class="hidden">
+      <input id="type-input-a" class="dual-input" type="text" placeholder="Keyword 1…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input id="type-input-b" class="dual-input" type="text" placeholder="Keyword 2…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+  </div>
+
+</div>
+
+<script src="data.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

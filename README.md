@@ -1,31 +1,37 @@
-# Emoji Blaster — Multiplayer Server
+# Emoji Blaster
 
-A small Node.js + Socket.io server that adds real-time multiplayer to Emoji
-Blaster: room codes, a synced falling emoji, and a live per-room scoreboard.
+A typing-defense game: type the keyword before the emoji lands. Play solo
+across three difficulty levels, or create/join a room for real-time
+multiplayer. Everything — landing page, solo game, and multiplayer server —
+runs from a single Node.js + Express + Socket.io Web Service.
 
 ## What's in here
 
 ```
-server.js         ← Express + Socket.io server (room logic, spawn, scoring)
-emojiDB.js         ← emoji → keyword list (PLACEHOLDER — see note below)
+server.js          ← Express + Socket.io server (room logic, spawn, scoring)
+db.js               ← MongoDB connection helper (optional analytics persistence)
+models.js           ← Mongoose schema for saved game sessions
+emojiDB.js          ← emoji → keyword list used by the multiplayer server (PLACEHOLDER — see note below)
 package.json
 public/
-  index.html       ← landing page (Solo / Multiplayer choice)
-  game.html         ← put your Construct 3 export's index.html here, renamed
-  multiplayer.html  ← username entry, room create/join, game + scoreboard
+  index.html         ← landing page (Solo / Multiplayer mode select)
+  game.html           ← solo game (vanilla JS + canvas, no external engine)
+  game.js
+  data.js             ← real, verified emoji → keyword dataset used by the solo game
+  media/               ← solo game sound effects
+  multiplayer.html    ← username entry, room create/join, game + scoreboard
+  client.js            ← multiplayer.html's socket client
+  style.css            ← shared styling for multiplayer.html
 ```
 
-## ⚠️ Replace the placeholder keyword data
+## ⚠️ `emojiDB.js` still has placeholder keyword data
 
-`emojiDB.js` was reconstructed from memory of screenshots earlier in the
-build process — it is NOT guaranteed to exactly match your real Construct 3
-`EmojiDB` dictionary. Your Construct export includes a `data.json` file that
-almost certainly has your real, verified keyword lists. Once you have that
-file, either:
-
-- Paste its contents into `emojiDB.js` in the same `{ "emoji": [...] }`
-  shape, or
-- Share it and it can be converted for you.
+`emojiDB.js` (used by the multiplayer server) was reconstructed from memory
+and is NOT guaranteed to match the real dataset. The real, verified data
+already lives in this repo at `public/data.js` (used by the solo game) — it
+just hasn't been ported into `emojiDB.js`'s `{ "emoji": [...] }` shape yet.
+Note also that `emojiDB.js` doesn't currently export a `sharedKeywords`
+function, which `server.js` calls for Level 3 rooms.
 
 ## Running locally
 
@@ -38,40 +44,25 @@ Then open `http://localhost:3001`.
 
 ## Deploying on Render
 
-Unlike your existing static site, **this needs a Web Service**, not a
-Static Site — Socket.io requires a server process that stays running (a
-static site can only serve files, it can't hold open connections).
+This needs a **Web Service**, not a Static Site — Socket.io requires a
+server process that stays running.
 
-1. Push this folder to a new GitHub repo (or a new folder in your existing
-   one — see note below).
-2. On Render: **New +** → **Web Service** (not Static Site).
-3. Connect the repo.
-4. **Build Command:** `npm install`
-5. **Start Command:** `npm start`
-6. Deploy. Render will give you a URL like
-   `https://emoji-blaster-multiplayer.onrender.com`.
-
-### Important — this is a separate deployment from your current site
-
-Your current `emoji-blaster.onrender.com` (Static Site) can't run this
-server code. You have two options:
-
-- **Simplest:** deploy this as a second, separate Render service
-  (e.g. `emoji-blaster-multiplayer.onrender.com`), and have your existing
-  landing page's Multiplayer button link out to that URL instead of a local
-  page.
-- **Cleaner long-term:** replace your static site entirely with this repo
-  (it already serves the landing page and can serve `game.html` too), so
-  everything — solo, multiplayer, and the landing page — runs from one
-  Render Web Service instead of two separate deployments.
+1. Connect this repo on Render.
+2. **Build Command:** `npm install`
+3. **Start Command:** `npm start`
+4. (Optional) set `MONGODB_URI` under the service's Environment tab to
+   persist game session analytics to MongoDB — without it, sessions just
+   log to the console.
 
 ## Known limitations (current version)
 
-- Only recreates Level 1's mechanic (single falling emoji, first correct
-  keyword wins the point) — Levels 2 and 3's mechanics aren't ported to
-  multiplayer yet.
+- Multiplayer only recreates Level 1's mechanic (single falling emoji,
+  first correct keyword wins the point) — Levels 2 and 3's mechanics
+  aren't ported to multiplayer yet, and Level 3 rooms will error given the
+  missing `sharedKeywords` export noted above.
 - Room data is in-memory only — if the server restarts, all active rooms
-  and scores are lost. Fine for casual play, not for anything needing
-  persistence.
+  and scores are lost.
 - No reconnect/rejoin-with-same-score handling if a player's connection
   drops mid-game.
+- The solo game's sound effects are in `public/media/`, but `game.js`
+  loads them from a `sounds/` path — audio silently fails to play.
