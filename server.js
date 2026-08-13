@@ -17,7 +17,8 @@ app.use(express.static(path.join(__dirname, "public")));
 const FALL_DURATION_MS = 8000; // how long an emoji is "live" before it's a miss
 const RETRY_LIMIT = 25;        // Level 3: re-roll if a random pair shares no keyword
 const LEVEL2_REQUIRED = 2;     // Level 2: distinct correct keywords needed per round
-const WIN_SCORE = 10;          // first player to reach this score ends the game
+const WIN_SCORE = 10;          // classic mode: first player to reach this score ends the game
+const SYNC_TIME_LIMIT_MS = 60000; // sync mode: the whole room races the clock, not each other
 const MODES = ["classic", "sync"];
 const MIN_PLAYERS = 2;         // a room needs at least this many ready players to start
 const REMATCH_DELAY_MS = 4000; // pause on the Game Over screen before the room resets
@@ -34,10 +35,16 @@ let dbConnected = false;
 //   currentEmoji: string | [string, string],
 //   targetKeywords: string[],
 //   foundKeywords: string[],   // Level 2 progress this round
-//   roundGuesses: Map(socketId -> normalizedGuess),  // sync mode progress this round
+//   roundGuesses: Map(socketId -> Set<normalizedGuess>),  // sync mode: every valid
+//     keyword each player has typed THIS round (accumulates — never wiped on a
+//     non-match, only cleared when a new emoji spawns), so two players can land
+//     on the same word minutes apart and still get credit.
 //   answered: bool,
-//   finished: bool,            // true once a player has hit WIN_SCORE
-//   timer: Timeout | null,
+//   finished: bool,            // true once the room's game has ended (score or timer)
+//   teamScore: number,         // sync mode: emoji successfully synced this game
+//   gameEndsAt: number | null, // sync mode: epoch ms when the game timer runs out
+//   gameTimer: Timeout | null, // sync mode: fires finishSyncGame when time's up
+//   timer: Timeout | null,     // per-round "miss" timeout (both modes)
 //   started: bool,
 //   startedAt: number | null,
 //   roundStartedAt: number | null,
@@ -129,6 +136,7 @@ function resetRoomForNextGame(code) {
   if (!room) return;
 
   clearTimeout(room.timer);
+  clearTimeout(room.gameTimer);
   room.started = false;
   room.finished = false;
   room.currentEmoji = null;
@@ -138,6 +146,8 @@ function resetRoomForNextGame(code) {
   room.answered = false;
   room.startedAt = null;
   room.roundStartedAt = null;
+  room.gameEndsAt = null;
+  room.teamScore = 0;
   room.sessionDoc = null;
   room.currentRound = null;
   room.players.forEach((p) => { p.score = 0; p.ready = false; });
@@ -147,8 +157,9 @@ function resetRoomForNextGame(code) {
   broadcastScoreboard(code);
 }
 
-// Ends the room's game once a player reaches WIN_SCORE. Returns true if the
-// game just ended (caller should not schedule another round in that case).
+// Classic mode: ends the room's game once a player reaches WIN_SCORE.
+// Returns true if the game just ended (caller should not schedule another
+// round in that case).
 function checkGameOver(code) {
   const room = rooms[code];
   if (!room || room.finished) return false;
@@ -158,10 +169,24 @@ function checkGameOver(code) {
 
   room.finished = true;
   clearTimeout(room.timer);
-  io.to(code).emit("game-over", { winner: winner.username, scoreboard: getScoreboard(room) });
+  io.to(code).emit("game-over", { mode: "classic", winner: winner.username, scoreboard: getScoreboard(room) });
   endGame(code, "score-limit");
   setTimeout(() => resetRoomForNextGame(code), REMATCH_DELAY_MS);
   return true;
+}
+
+// Sync mode: the room shares one clock instead of racing to a score. Called
+// when the timer set in startGame() runs out.
+function finishSyncGame(code) {
+  const room = rooms[code];
+  if (!room || room.finished) return;
+
+  room.finished = true;
+  clearTimeout(room.timer);
+  clearTimeout(room.gameTimer);
+  io.to(code).emit("game-over", { mode: "sync", teamScore: room.teamScore || 0, scoreboard: getScoreboard(room) });
+  endGame(code, "time-up");
+  setTimeout(() => resetRoomForNextGame(code), REMATCH_DELAY_MS);
 }
 
 function spawnEmoji(code) {
@@ -222,6 +247,7 @@ function startGame(code) {
   if (!room || room.started) return;
   room.started = true;
   room.startedAt = Date.now();
+  room.teamScore = 0;
 
   room.sessionDoc = new GameSession({
     roomCode: code,
@@ -231,7 +257,15 @@ function startGame(code) {
     rounds: [],
   });
 
-  io.to(code).emit("game-started", { level: room.level, mode: room.mode });
+  let endsAt = null;
+  if (room.mode === "sync") {
+    endsAt = room.startedAt + SYNC_TIME_LIMIT_MS;
+    room.gameEndsAt = endsAt;
+    clearTimeout(room.gameTimer);
+    room.gameTimer = setTimeout(() => finishSyncGame(code), SYNC_TIME_LIMIT_MS);
+  }
+
+  io.to(code).emit("game-started", { level: room.level, mode: room.mode, endsAt });
   console.log(`[analytics] session-start`, { code, level: room.level, mode: room.mode, startedAt: room.startedAt });
   spawnEmoji(code);
 }
@@ -240,6 +274,7 @@ function endGame(code, reason) {
   const room = rooms[code];
   if (!room) return;
   clearTimeout(room.timer);
+  clearTimeout(room.gameTimer);
 
   if (room.currentRound) flushCurrentRound(room, null, null);
 
@@ -316,10 +351,13 @@ function handleClassicGuess(code, room, socket, player, normalized, elapsedMs) {
   }
 }
 
-// Sync mode: every player must submit the SAME valid keyword before the
-// round clears. Each submission overwrites that player's standing guess for
-// the round; a mismatch across players resets everyone's guess so they can
-// re-sync instead of getting stuck racing each other.
+// Sync mode: players type valid keywords freely, one after another — nothing
+// ever "locks in". Each player accumulates a running set of every valid
+// keyword they've typed THIS round, and as soon as one word appears in every
+// player's set (however far apart in time they typed it), the round clears.
+// No guess text is ever broadcast to other players before that point — only
+// a private guess-wrong nudge to the person who typed it, and a headcount of
+// how many players have contributed so far.
 function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
   const matchedKeyword = room.targetKeywords.find(k => k.toLowerCase() === normalized);
 
@@ -341,29 +379,32 @@ function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
     return;
   }
 
-  room.roundGuesses.set(socket.id, normalized);
+  if (!room.roundGuesses.has(socket.id)) room.roundGuesses.set(socket.id, new Set());
+  room.roundGuesses.get(socket.id).add(normalized);
 
   const playerIds = Array.from(room.players.keys());
-  const guesses = playerIds.map(id => room.roundGuesses.get(id));
-  const everyoneGuessed = guesses.every(g => g !== undefined);
+  const guessSets = playerIds.map(id => room.roundGuesses.get(id));
+  const everyoneHasGuessed = guessSets.every(s => s && s.size > 0);
 
-  if (!everyoneGuessed) {
-    io.to(code).emit("sync-waiting", {
-      username: player ? player.username : "?",
-      waitingOn: playerIds.length - guesses.filter(g => g !== undefined).length,
+  if (!everyoneHasGuessed) {
+    io.to(code).emit("sync-progress", {
+      guessedCount: guessSets.filter(s => s && s.size > 0).length,
+      totalCount: playerIds.length,
     });
     return;
   }
 
-  const allMatch = guesses.every(g => g === guesses[0]);
+  const sharedWord = Array.from(guessSets[0]).find(word => guessSets.every(s => s.has(word)));
 
-  if (!allMatch) {
-    room.roundGuesses = new Map();
-    io.to(code).emit("sync-mismatch");
+  if (!sharedWord) {
+    // Everyone's contributed at least one guess, but nothing overlaps yet —
+    // keep the accumulated sets and just wait for the next guess from anyone.
+    io.to(code).emit("sync-progress", { guessedCount: playerIds.length, totalCount: playerIds.length });
     return;
   }
 
   room.players.forEach(p => { p.score += 1; });
+  room.teamScore = (room.teamScore || 0) + 1;
   broadcastScoreboard(code);
 
   room.answered = true;
@@ -374,12 +415,11 @@ function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
   io.to(code).emit("emoji-correct", {
     emoji: room.currentEmoji,
     username: "Everyone",
-    guess: normalized,
+    guess: sharedWord,
   });
 
-  if (!checkGameOver(code)) {
-    setTimeout(() => spawnEmoji(code), 700);
-  }
+  // Sync mode never ends on score — only the room-level timer ends it.
+  setTimeout(() => spawnEmoji(code), 700);
 }
 
 io.on("connection", (socket) => {
@@ -395,6 +435,9 @@ io.on("connection", (socket) => {
       roundGuesses: new Map(),
       answered: false,
       finished: false,
+      teamScore: 0,
+      gameEndsAt: null,
+      gameTimer: null,
       timer: null,
       started: false,
       startedAt: null,

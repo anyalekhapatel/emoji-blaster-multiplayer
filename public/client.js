@@ -11,7 +11,12 @@ const screens = {
 
 const MODE_LABELS = {
   classic: "Race — first correct guess wins",
-  sync: "Sync — everyone must type the same keyword",
+  sync: "Sync — type keywords together and beat the clock",
+};
+
+const SCOREBOARD_HINTS = {
+  classic: "(first to 10 wins)",
+  sync: "(shared team score — beat the clock!)",
 };
 
 function showScreen(name) {
@@ -127,6 +132,7 @@ socket.on("lobby-update", ({ players, gameInProgress, minPlayers }) => {
 socket.on("room-reset", () => {
   iAmReady = false;
   readyBtn.textContent = "Ready Up";
+  stopCountdown();
   showScreen("lobby");
 });
 
@@ -142,11 +148,45 @@ const fallZone = document.getElementById("fall-zone");
 const roundFeedback = document.getElementById("round-feedback");
 const guessInput = document.getElementById("guess-input");
 const scoreboardList = document.getElementById("scoreboard-list");
+const scoreboardHint = document.getElementById("scoreboard-hint");
+const timerSmall = document.getElementById("timer-small");
 
-socket.on("game-started", () => {
+let countdownInterval = null;
+
+function stopCountdown() {
+  clearInterval(countdownInterval);
+  countdownInterval = null;
+  timerSmall.textContent = "";
+  timerSmall.classList.add("hidden");
+}
+
+function startCountdown(endsAt) {
+  clearInterval(countdownInterval);
+  timerSmall.classList.remove("hidden");
+
+  function tick() {
+    const remainingMs = Math.max(0, endsAt - Date.now());
+    const totalSeconds = Math.ceil(remainingMs / 1000);
+    const mm = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+    const ss = String(totalSeconds % 60).padStart(2, "0");
+    timerSmall.textContent = `⏱ ${mm}:${ss}`;
+    if (remainingMs <= 0) clearInterval(countdownInterval);
+  }
+
+  tick();
+  countdownInterval = setInterval(tick, 250);
+}
+
+socket.on("game-started", ({ mode, endsAt }) => {
   showScreen("game");
   guessInput.value = "";
   guessInput.focus();
+  scoreboardHint.textContent = SCOREBOARD_HINTS[mode] || "";
+  if (mode === "sync" && endsAt) {
+    startCountdown(endsAt);
+  } else {
+    stopCountdown();
+  }
 });
 
 socket.on("emoji-spawn", ({ emoji, fallDuration }) => {
@@ -170,13 +210,10 @@ socket.on("emoji-miss", () => {
   roundFeedback.textContent = "Missed it — next one incoming…";
 });
 
-socket.on("sync-waiting", ({ username, waitingOn }) => {
-  const who = waitingOn === 1 ? "1 player" : `${waitingOn} players`;
-  roundFeedback.textContent = `${username} locked in "${guessInput.value || "a guess"}" — waiting on ${who}…`;
-});
-
-socket.on("sync-mismatch", () => {
-  roundFeedback.textContent = "Didn't match — everyone try again!";
+// Never reveals what anyone actually typed — just a headcount, so guessing
+// stays private until the team lands on a shared word.
+socket.on("sync-progress", ({ guessedCount, totalCount }) => {
+  roundFeedback.textContent = `${guessedCount}/${totalCount} players have guessed — keep typing words until they match!`;
 });
 
 socket.on("scoreboard", (entries) => {
@@ -193,8 +230,13 @@ const gameoverWinner = document.getElementById("gameover-winner");
 const gameoverScoreboardList = document.getElementById("gameover-scoreboard-list");
 const playAgainBtn = document.getElementById("play-again-btn");
 
-socket.on("game-over", ({ winner, scoreboard }) => {
-  gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
+socket.on("game-over", ({ mode, winner, teamScore, scoreboard }) => {
+  stopCountdown();
+  if (mode === "sync") {
+    gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
+  } else {
+    gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
+  }
   gameoverScoreboardList.innerHTML = "";
   scoreboard.forEach(p => {
     const li = document.createElement("li");
@@ -212,6 +254,7 @@ function submitGuess() {
   const guess = guessInput.value.trim();
   if (!guess) return;
   socket.emit("submit-guess", { guess });
+  guessInput.value = ""; // clear immediately so the next word can be typed right away — no "locking in"
 }
 
 guessInput.addEventListener("keydown", (e) => {

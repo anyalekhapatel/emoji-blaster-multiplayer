@@ -217,6 +217,15 @@ input:focus { border-color: var(--amber); }
   font-size: 0.85rem;
 }
 
+#timer-small {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 700;
+  color: var(--coral);
+  font-size: 1rem;
+}
+
+#timer-small.hidden { display: none; }
+
 #fall-zone {
   width: 100%;
   height: 260px;

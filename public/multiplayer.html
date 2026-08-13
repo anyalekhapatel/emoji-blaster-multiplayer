@@ -21,7 +21,7 @@
     <p class="hint">Mode (used when you create a room)</p>
     <div class="button-row" id="mode-select">
       <button type="button" id="mode-classic-btn" class="btn btn-mode active" data-mode="classic">Race<br><span class="mode-desc">First correct guess wins</span></button>
-      <button type="button" id="mode-sync-btn" class="btn btn-mode" data-mode="sync">Sync<br><span class="mode-desc">Both players must match</span></button>
+      <button type="button" id="mode-sync-btn" class="btn btn-mode" data-mode="sync">Sync<br><span class="mode-desc">Match keywords as a team, beat the clock</span></button>
     </div>
 
     <div class="button-row">
@@ -57,6 +57,7 @@
     <div id="game-hud">
       <div id="room-code-small"></div>
       <div id="mode-small"></div>
+      <div id="timer-small" class="hidden"></div>
     </div>
 
     <div id="fall-zone">
@@ -67,7 +68,7 @@
     <input id="guess-input" type="text" placeholder="Type the keyword and press Enter…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <aside id="scoreboard">
-      <h2>Scoreboard <span class="hint">(first to 10 wins)</span></h2>
+      <h2>Scoreboard <span id="scoreboard-hint" class="hint">(first to 10 wins)</span></h2>
       <ol id="scoreboard-list"></ol>
     </aside>
   </section>
