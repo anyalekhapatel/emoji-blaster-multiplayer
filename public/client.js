@@ -11,8 +11,28 @@ const screens = {
 
 const MODE_LABELS = {
   classic: "Race — first correct guess wins",
-  sync: "Sync — type keywords together and beat the clock",
 };
+
+const CONSENSUS_REQUIRED = { 1: 2, 2: 3, 3: 4 };
+
+const CONSENSUS_LABELS = {
+  1: "Level 1 — Two-Player Match",
+  2: "Level 2 — Three-Player Match",
+  3: "Level 3 — Four-Player Match",
+};
+
+const CONSENSUS_DESCRIPTIONS = {
+  1: "An emoji clears once at least 2 players enter the same keyword. The room can hold more than 2 — only 2 need to match.",
+  2: "An emoji clears once at least 3 players independently enter the same keyword. The room can hold more than 3 — only 3 need to match.",
+  3: "An emoji clears once at least 4 players enter the same keyword. The room can hold more than 4 — only 4 need to match.",
+};
+
+function formatModeLabel(mode, consensusLevel) {
+  if (mode === "sync") {
+    return `Sync — ${CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1]}`;
+  }
+  return MODE_LABELS[mode] || mode;
+}
 
 const SCOREBOARD_HINTS = {
   classic: "(first to 10 wins)",
@@ -43,7 +63,7 @@ function getUsername() {
 }
 
 // ---- Mode select (only matters for room creation; joiners inherit the room's mode) ----
-const modeButtons = Array.from(document.querySelectorAll(".btn-mode"));
+const modeButtons = Array.from(document.querySelectorAll("#mode-select .btn-mode"));
 let selectedMode = "classic";
 
 modeButtons.forEach(btn => {
@@ -84,26 +104,43 @@ const modeSmall = document.getElementById("mode-small");
 const playerList = document.getElementById("player-list");
 const lobbyStatus = document.getElementById("lobby-status");
 const readyBtn = document.getElementById("ready-btn");
+const consensusSelect = document.getElementById("consensus-select");
+const consensusButtons = Array.from(document.querySelectorAll("#consensus-select .btn-mode"));
+const consensusDescription = document.getElementById("consensus-description");
 
 let currentRoomCode = null;
 let currentMode = "classic";
+let currentConsensusLevel = 1;
 let iAmReady = false;
 
-function enterRoom(code, mode) {
+function enterRoom(code, mode, consensusLevel) {
   currentRoomCode = code;
   currentMode = mode || "classic";
+  currentConsensusLevel = consensusLevel || 1;
   roomCodeDisplay.textContent = code;
   roomCodeSmall.textContent = code;
-  lobbyMode.textContent = MODE_LABELS[currentMode] || currentMode;
-  modeSmall.textContent = MODE_LABELS[currentMode] || currentMode;
+  const label = formatModeLabel(currentMode, currentConsensusLevel);
+  lobbyMode.textContent = label;
+  modeSmall.textContent = label;
   showScreen("lobby");
 }
 
-socket.on("room-created", ({ code, mode }) => enterRoom(code, mode));
+socket.on("room-created", ({ code, mode, consensusLevel }) => enterRoom(code, mode, consensusLevel));
 
-socket.on("room-joined", ({ code, mode }) => enterRoom(code, mode));
+socket.on("room-joined", ({ code, mode, consensusLevel }) => enterRoom(code, mode, consensusLevel));
 
-socket.on("lobby-update", ({ players, gameInProgress, minPlayers }) => {
+consensusButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (btn.disabled) return;
+    socket.emit("set-consensus-level", { level: Number(btn.dataset.consensus) });
+  });
+});
+
+socket.on("lobby-update", ({ players, mode, consensusLevel, gameInProgress, minPlayers }) => {
+  currentMode = mode || currentMode;
+  currentConsensusLevel = consensusLevel || currentConsensusLevel;
+  lobbyMode.textContent = formatModeLabel(currentMode, currentConsensusLevel);
+
   playerList.innerHTML = "";
   players.forEach(p => {
     const li = document.createElement("li");
@@ -116,6 +153,21 @@ socket.on("lobby-update", ({ players, gameInProgress, minPlayers }) => {
     li.appendChild(badge);
     playerList.appendChild(li);
   });
+
+  const isSync = currentMode === "sync";
+  consensusSelect.classList.toggle("hidden", !isSync);
+  consensusDescription.classList.toggle("hidden", !isSync);
+  if (isSync) {
+    consensusDescription.textContent = CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || "";
+    consensusButtons.forEach(btn => {
+      const level = Number(btn.dataset.consensus);
+      const required = CONSENSUS_REQUIRED[level];
+      const unlocked = players.length >= required;
+      btn.disabled = !unlocked || gameInProgress;
+      btn.classList.toggle("active", level === currentConsensusLevel);
+      btn.title = unlocked ? "" : `Needs ${required} players in the room to pick this level`;
+    });
+  }
 
   if (gameInProgress) {
     lobbyStatus.textContent = "A game is in progress — you'll be able to ready up once it ends.";
@@ -177,10 +229,13 @@ function startCountdown(endsAt) {
   countdownInterval = setInterval(tick, 250);
 }
 
-socket.on("game-started", ({ mode, endsAt }) => {
+socket.on("game-started", ({ mode, consensusLevel, endsAt }) => {
   showScreen("game");
   guessInput.value = "";
   guessInput.focus();
+  currentMode = mode || currentMode;
+  currentConsensusLevel = consensusLevel || currentConsensusLevel;
+  modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
   scoreboardHint.textContent = SCOREBOARD_HINTS[mode] || "";
   if (mode === "sync" && endsAt) {
     startCountdown(endsAt);
@@ -210,10 +265,11 @@ socket.on("emoji-miss", () => {
   roundFeedback.textContent = "Missed it — next one incoming…";
 });
 
-// Never reveals what anyone actually typed — just a headcount, so guessing
-// stays private until the team lands on a shared word.
-socket.on("sync-progress", ({ guessedCount, totalCount }) => {
-  roundFeedback.textContent = `${guessedCount}/${totalCount} players have guessed — keep typing words until they match!`;
+// Never reveals which word anyone typed — just how close the room is to
+// consensus (best overlap so far vs. how many are needed), so guessing
+// stays private until the room actually lands on a shared word.
+socket.on("sync-progress", ({ bestCount, required }) => {
+  roundFeedback.textContent = `Closest match: ${bestCount}/${required} players — keep typing words until enough match!`;
 });
 
 socket.on("scoreboard", (entries) => {

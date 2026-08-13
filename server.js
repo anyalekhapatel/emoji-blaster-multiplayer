@@ -20,8 +20,20 @@ const LEVEL2_REQUIRED = 2;     // Level 2: distinct correct keywords needed per 
 const WIN_SCORE = 10;          // classic mode: first player to reach this score ends the game
 const SYNC_TIME_LIMIT_MS = 60000; // sync mode: the whole room races the clock, not each other
 const MODES = ["classic", "sync"];
-const MIN_PLAYERS = 2;         // a room needs at least this many ready players to start
+const MIN_PLAYERS = 2;         // classic mode: a room needs at least this many ready players to start
 const REMATCH_DELAY_MS = 4000; // pause on the Game Over screen before the room resets
+
+// Sync mode consensus levels: an emoji clears once this many DISTINCT
+// players have independently typed the same valid keyword — the room can
+// hold more players than that; only the threshold has to agree.
+const CONSENSUS_REQUIRED = { 1: 2, 2: 3, 3: 4 };
+const DEFAULT_CONSENSUS_LEVEL = 1;
+
+function getMinPlayers(room) {
+  return room.mode === "sync"
+    ? (CONSENSUS_REQUIRED[room.consensusLevel] || CONSENSUS_REQUIRED[DEFAULT_CONSENSUS_LEVEL])
+    : MIN_PLAYERS;
+}
 
 let dbConnected = false;
 
@@ -90,14 +102,16 @@ function broadcastLobby(code) {
     players: getPlayerList(room),
     level: room.level,
     mode: room.mode,
-    minPlayers: MIN_PLAYERS,
+    consensusLevel: room.consensusLevel,
+    consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel] || null,
+    minPlayers: getMinPlayers(room),
     gameInProgress: room.started && !room.finished,
   });
 }
 
 function allPlayersReady(room) {
   const players = Array.from(room.players.values());
-  return players.length >= MIN_PLAYERS && players.every((p) => p.ready);
+  return players.length >= getMinPlayers(room) && players.every((p) => p.ready);
 }
 
 function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -265,8 +279,14 @@ function startGame(code) {
     room.gameTimer = setTimeout(() => finishSyncGame(code), SYNC_TIME_LIMIT_MS);
   }
 
-  io.to(code).emit("game-started", { level: room.level, mode: room.mode, endsAt });
-  console.log(`[analytics] session-start`, { code, level: room.level, mode: room.mode, startedAt: room.startedAt });
+  io.to(code).emit("game-started", {
+    level: room.level,
+    mode: room.mode,
+    consensusLevel: room.consensusLevel,
+    consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel],
+    endsAt,
+  });
+  console.log(`[analytics] session-start`, { code, level: room.level, mode: room.mode, consensusLevel: room.consensusLevel, startedAt: room.startedAt });
   spawnEmoji(code);
 }
 
@@ -351,13 +371,34 @@ function handleClassicGuess(code, room, socket, player, normalized, elapsedMs) {
   }
 }
 
+// Given the room's accumulated per-player guess sets, returns the highest
+// number of distinct players currently sharing any one word, plus that word
+// once it clears the room's consensus threshold (null until then).
+function analyzeConsensus(room) {
+  const counts = new Map(); // word -> count of distinct players who've typed it
+  for (const set of room.roundGuesses.values()) {
+    for (const word of set) counts.set(word, (counts.get(word) || 0) + 1);
+  }
+
+  const required = CONSENSUS_REQUIRED[room.consensusLevel] || CONSENSUS_REQUIRED[DEFAULT_CONSENSUS_LEVEL];
+  let bestCount = 0;
+  let winningWord = null;
+  for (const [word, count] of counts.entries()) {
+    if (count > bestCount) bestCount = count;
+    if (count >= required && !winningWord) winningWord = word;
+  }
+  return { bestCount, winningWord, required };
+}
+
 // Sync mode: players type valid keywords freely, one after another — nothing
 // ever "locks in". Each player accumulates a running set of every valid
-// keyword they've typed THIS round, and as soon as one word appears in every
-// player's set (however far apart in time they typed it), the round clears.
-// No guess text is ever broadcast to other players before that point — only
-// a private guess-wrong nudge to the person who typed it, and a headcount of
-// how many players have contributed so far.
+// keyword they've typed THIS round, and as soon as the room's consensus
+// threshold (2/3/4 players, per the room's chosen consensus level) has
+// independently typed the same word — however far apart in time — the round
+// clears. The room can hold more players than the threshold; only that many
+// have to agree. No guess text is ever broadcast to other players before
+// that point — only a private guess-wrong nudge to the person who typed it,
+// and a count of how close the room is to consensus (never which word).
 function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
   const matchedKeyword = room.targetKeywords.find(k => k.toLowerCase() === normalized);
 
@@ -382,24 +423,10 @@ function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
   if (!room.roundGuesses.has(socket.id)) room.roundGuesses.set(socket.id, new Set());
   room.roundGuesses.get(socket.id).add(normalized);
 
-  const playerIds = Array.from(room.players.keys());
-  const guessSets = playerIds.map(id => room.roundGuesses.get(id));
-  const everyoneHasGuessed = guessSets.every(s => s && s.size > 0);
+  const { bestCount, winningWord, required } = analyzeConsensus(room);
 
-  if (!everyoneHasGuessed) {
-    io.to(code).emit("sync-progress", {
-      guessedCount: guessSets.filter(s => s && s.size > 0).length,
-      totalCount: playerIds.length,
-    });
-    return;
-  }
-
-  const sharedWord = Array.from(guessSets[0]).find(word => guessSets.every(s => s.has(word)));
-
-  if (!sharedWord) {
-    // Everyone's contributed at least one guess, but nothing overlaps yet —
-    // keep the accumulated sets and just wait for the next guess from anyone.
-    io.to(code).emit("sync-progress", { guessedCount: playerIds.length, totalCount: playerIds.length });
+  if (!winningWord) {
+    io.to(code).emit("sync-progress", { bestCount, required, totalPlayers: room.players.size });
     return;
   }
 
@@ -415,7 +442,7 @@ function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
   io.to(code).emit("emoji-correct", {
     emoji: room.currentEmoji,
     username: "Everyone",
-    guess: sharedWord,
+    guess: winningWord,
   });
 
   // Sync mode never ends on score — only the room-level timer ends it.
@@ -423,12 +450,13 @@ function handleSyncGuess(code, room, socket, player, normalized, elapsedMs) {
 }
 
 io.on("connection", (socket) => {
-  socket.on("create-room", ({ username, level, mode }) => {
+  socket.on("create-room", ({ username, level, mode, consensusLevel }) => {
     const code = generateRoomCode();
     rooms[code] = {
       players: new Map(),
       level: [1, 2, 3].includes(level) ? level : 1,
       mode: MODES.includes(mode) ? mode : "classic",
+      consensusLevel: CONSENSUS_REQUIRED[consensusLevel] ? consensusLevel : DEFAULT_CONSENSUS_LEVEL,
       currentEmoji: null,
       targetKeywords: [],
       foundKeywords: [],
@@ -448,7 +476,13 @@ io.on("connection", (socket) => {
     rooms[code].players.set(socket.id, { username, score: 0, ready: false });
     socket.join(code);
     socket.data.roomCode = code;
-    socket.emit("room-created", { code, level: rooms[code].level, mode: rooms[code].mode });
+    socket.emit("room-created", {
+      code,
+      level: rooms[code].level,
+      mode: rooms[code].mode,
+      consensusLevel: rooms[code].consensusLevel,
+      consensusRequired: CONSENSUS_REQUIRED[rooms[code].consensusLevel],
+    });
     broadcastLobby(code);
     broadcastScoreboard(code);
   });
@@ -463,12 +497,30 @@ io.on("connection", (socket) => {
     room.players.set(socket.id, { username, score: 0, ready: false });
     socket.join(code);
     socket.data.roomCode = code;
-    socket.emit("room-joined", { code, level: room.level, mode: room.mode });
+    socket.emit("room-joined", {
+      code,
+      level: room.level,
+      mode: room.mode,
+      consensusLevel: room.consensusLevel,
+      consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel],
+    });
     broadcastLobby(code);
     broadcastScoreboard(code);
     // Note: joiners always land in the lobby, even if a round is currently
     // live in this room — they wait there (see gameInProgress in
     // lobby-update) until the room resets for the next game.
+  });
+
+  socket.on("set-consensus-level", ({ level }) => {
+    const code = socket.data.roomCode;
+    const room = rooms[code];
+    if (!room || room.started || room.mode !== "sync") return;
+
+    const required = CONSENSUS_REQUIRED[level];
+    if (!required || room.players.size < required) return; // not enough players in the room yet to pick this level
+
+    room.consensusLevel = level;
+    broadcastLobby(code);
   });
 
   socket.on("toggle-ready", () => {
