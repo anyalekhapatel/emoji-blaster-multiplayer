@@ -1,4 +1,4 @@
-const { getRoom, saveRoom, pruneStalePlayers } = require("../lib/room-store");
+const { updateRoom, pruneStalePlayers } = require("../lib/room-store");
 const { addPlayer, lobbyPayload, getScoreboard, CONSENSUS_REQUIRED } = require("../lib/game-logic");
 const { publish } = require("../lib/pusher");
 
@@ -15,20 +15,21 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const room = await getRoom(code);
+  const { room, result: events } = await updateRoom(code, (r) => {
+    pruneStalePlayers(r);
+    addPlayer(r, playerId, username);
+    return [
+      { name: "lobby-update", data: lobbyPayload(r) },
+      { name: "scoreboard", data: getScoreboard(r) },
+    ];
+  });
+
   if (!room) {
     res.status(404).json({ error: "Room not found" });
     return;
   }
 
-  pruneStalePlayers(room);
-  addPlayer(room, playerId, username);
-  await saveRoom(code, room);
-
-  await publish(code, [
-    { name: "lobby-update", data: lobbyPayload(room) },
-    { name: "scoreboard", data: getScoreboard(room) },
-  ]);
+  await publish(code, events);
 
   res.status(200).json({
     code,
@@ -37,4 +38,7 @@ module.exports = async (req, res) => {
     consensusLevel: room.consensusLevel,
     consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel],
   });
+  // Note: joiners always land in the lobby, even if a round is currently
+  // live in this room — they wait there (see gameInProgress in
+  // lobby-update) until the room resets for the next game.
 };

@@ -1,9 +1,9 @@
 // POST /api/room-reset — called by a client ~4s after receiving "game-over"
 // (giving players time to read the final score), asking the room to reset
-// to a fresh lobby. Idempotent: no-ops if the room isn't finished, or the
-// resetAt deadline hasn't actually passed yet.
+// to a fresh lobby. Idempotent, goes through updateRoom's CAS retry since
+// every connected client calls this independently.
 
-const { getRoom, saveRoom } = require("../lib/room-store");
+const { updateRoom } = require("../lib/room-store");
 const { resolveRoomReset } = require("../lib/game-logic");
 const { publish } = require("../lib/pusher");
 
@@ -20,17 +20,13 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const room = await getRoom(code);
+  const { room, result: events } = await updateRoom(code, (r) => resolveRoomReset(r));
+
   if (!room) {
     res.status(404).json({ error: "Room not found" });
     return;
   }
 
-  const events = resolveRoomReset(room);
-  if (events) {
-    await saveRoom(code, room);
-    await publish(code, events);
-  }
-
+  if (events) await publish(code, events);
   res.status(200).json({ ok: true, resolved: !!events });
 };

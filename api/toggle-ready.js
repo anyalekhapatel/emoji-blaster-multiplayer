@@ -1,4 +1,4 @@
-const { getRoom, saveRoom, pruneStalePlayers } = require("../lib/room-store");
+const { updateRoom, pruneStalePlayers } = require("../lib/room-store");
 const { toggleReady, lobbyPayload, getScoreboard } = require("../lib/game-logic");
 const { publish } = require("../lib/pusher");
 
@@ -15,18 +15,19 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const room = await getRoom(code);
+  const { room, result: events } = await updateRoom(code, (r) => {
+    const removed = pruneStalePlayers(r);
+    const readyEvents = toggleReady(r, playerId);
+    return removed.length > 0
+      ? [{ name: "lobby-update", data: lobbyPayload(r) }, { name: "scoreboard", data: getScoreboard(r) }, ...readyEvents]
+      : readyEvents;
+  });
+
   if (!room) {
     res.status(404).json({ error: "Room not found" });
     return;
   }
 
-  const removed = pruneStalePlayers(room);
-  const events = toggleReady(room, playerId);
-  await saveRoom(code, room);
-
-  if (removed.length > 0) events.unshift({ name: "lobby-update", data: lobbyPayload(room) }, { name: "scoreboard", data: getScoreboard(room) });
   await publish(code, events);
-
   res.status(200).json({ ok: true });
 };

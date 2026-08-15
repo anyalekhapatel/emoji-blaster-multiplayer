@@ -1,8 +1,9 @@
 // POST /api/game-timeout — sync mode only. Called by a client's local
 // countdown when the room's 60s game clock appears to have run out.
-// Idempotent, same pattern as round-timeout.
+// Idempotent, same pattern as round-timeout — goes through updateRoom's CAS
+// retry since every connected client calls this independently.
 
-const { getRoom, saveRoom } = require("../lib/room-store");
+const { updateRoom } = require("../lib/room-store");
 const { resolveGameTimeout } = require("../lib/game-logic");
 const { publish } = require("../lib/pusher");
 
@@ -19,17 +20,13 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const room = await getRoom(code);
+  const { room, result: events } = await updateRoom(code, (r) => resolveGameTimeout(r));
+
   if (!room) {
     res.status(404).json({ error: "Room not found" });
     return;
   }
 
-  const events = resolveGameTimeout(room);
-  if (events) {
-    await saveRoom(code, room);
-    await publish(code, events);
-  }
-
+  if (events) await publish(code, events);
   res.status(200).json({ ok: true, resolved: !!events });
 };

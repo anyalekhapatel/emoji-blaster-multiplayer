@@ -5,7 +5,7 @@
 // disconnect handler's behavior (remove player, delete empty room, restart
 // the ready-check).
 
-const { getRoom, saveRoom, pruneStalePlayers, deleteRoom } = require("../lib/room-store");
+const { updateRoom, pruneStalePlayers, deleteRoom } = require("../lib/room-store");
 const { lobbyPayload, getScoreboard, allPlayersReady, startGame } = require("../lib/game-logic");
 const { publish } = require("../lib/pusher");
 
@@ -22,35 +22,31 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const room = await getRoom(code);
+  const { room, result } = await updateRoom(code, (r) => {
+    if (r.players[playerId]) r.players[playerId].lastSeenAt = Date.now();
+
+    const removed = pruneStalePlayers(r);
+    if (removed.length === 0) return { events: [] };
+    if (Object.keys(r.players).length === 0) return { empty: true, events: [] };
+
+    const events = [
+      { name: "lobby-update", data: lobbyPayload(r) },
+      { name: "scoreboard", data: getScoreboard(r) },
+    ];
+    if (!r.started && allPlayersReady(r)) events.push(...startGame(r));
+    return { events };
+  });
+
   if (!room) {
     res.status(404).json({ error: "Room not found" });
     return;
   }
 
-  if (room.players[playerId]) room.players[playerId].lastSeenAt = Date.now();
-
-  const removed = pruneStalePlayers(room);
-  if (removed.length === 0) {
-    await saveRoom(code, room);
-    res.status(200).json({ ok: true });
-    return;
-  }
-
-  if (Object.keys(room.players).length === 0) {
+  if (result.empty) {
     await deleteRoom(code);
-    res.status(200).json({ ok: true });
-    return;
+  } else if (result.events.length > 0) {
+    await publish(code, result.events);
   }
-
-  const events = [
-    { name: "lobby-update", data: lobbyPayload(room) },
-    { name: "scoreboard", data: getScoreboard(room) },
-  ];
-  if (!room.started && allPlayersReady(room)) events.push(...startGame(room));
-
-  await saveRoom(code, room);
-  await publish(code, events);
 
   res.status(200).json({ ok: true });
 };
