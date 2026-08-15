@@ -1,15 +1,12 @@
 {
   "name": "emoji-blaster-multiplayer",
-  "version": "1.0.0",
-  "description": "Server-authoritative multiplayer mode for Emoji Blaster",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "Server-authoritative multiplayer mode for Emoji Blaster — Vercel serverless functions + Pusher Channels + Upstash Redis",
   "scripts": {
-    "start": "node server.js"
+    "dev": "vercel dev"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "mongoose": "^8.5.0",
-    "dotenv": "^16.4.5"
+    "pusher": "^5.2.0",
+    "@upstash/redis": "^1.34.0"
   }
 }

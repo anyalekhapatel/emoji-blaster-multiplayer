@@ -1,6 +1,46 @@
-// client.js — Emoji Blaster multiplayer client
+// client.js — Emoji Blaster multiplayer client (Vercel: fetch() + Pusher,
+// no persistent socket). Every former socket.emit(...) is now a fetch()
+// POST to /api/*; every former socket.on(...) is now a Pusher channel
+// event binding. See lib/game-logic.js and the /api handlers for the
+// server-side half of each of these.
 
-const socket = io();
+const PLAYER_ID_KEY = "emoji-blaster-player-id";
+function getPlayerId() {
+  let id = sessionStorage.getItem(PLAYER_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem(PLAYER_ID_KEY, id);
+  }
+  return id;
+}
+const playerId = getPlayerId();
+
+async function api(path, body) {
+  const res = await fetch(`/api/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+
+let pusher = null;
+let channel = null;
+
+async function connectPusher() {
+  if (pusher) return pusher;
+  const { pusherKey, pusherCluster } = await fetch("/api/config").then((r) => r.json());
+  pusher = new Pusher(pusherKey, { cluster: pusherCluster });
+  return pusher;
+}
+
+async function subscribeToRoom(code) {
+  const p = await connectPusher();
+  if (channel) p.unsubscribe(channel.name);
+  channel = p.subscribe(`room-${code}`);
+  bindChannelEvents(channel);
+  return channel;
+}
 
 const screens = {
   landing: document.getElementById("screen-landing"),
@@ -40,7 +80,7 @@ const SCOREBOARD_HINTS = {
 };
 
 function showScreen(name) {
-  Object.values(screens).forEach(s => s.classList.add("hidden"));
+  Object.values(screens).forEach((s) => s.classList.add("hidden"));
   screens[name].classList.remove("hidden");
 }
 
@@ -66,20 +106,29 @@ function getUsername() {
 const modeButtons = Array.from(document.querySelectorAll("#mode-select .btn-mode"));
 let selectedMode = "classic";
 
-modeButtons.forEach(btn => {
+modeButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     selectedMode = btn.dataset.mode;
-    modeButtons.forEach(b => b.classList.toggle("active", b === btn));
+    modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
   });
 });
 
-createRoomBtn.addEventListener("click", () => {
+createRoomBtn.addEventListener("click", async () => {
   const username = getUsername();
   if (!username) return;
-  socket.emit("create-room", { username, mode: selectedMode });
+  const data = await api("create-room", { username, mode: selectedMode, playerId });
+  if (data.error) {
+    landingError.textContent = data.error;
+    landingError.classList.remove("hidden");
+    return;
+  }
+  await subscribeToRoom(data.code);
+  enterRoom(data.code, data.mode, data.consensusLevel);
+  startHeartbeat(data.code);
+  await resyncFromSnapshot(data.code);
 });
 
-joinRoomBtn.addEventListener("click", () => {
+joinRoomBtn.addEventListener("click", async () => {
   const username = getUsername();
   if (!username) return;
   const code = joinCodeInput.value.trim().toUpperCase();
@@ -88,13 +137,40 @@ joinRoomBtn.addEventListener("click", () => {
     landingError.classList.remove("hidden");
     return;
   }
-  socket.emit("join-room", { code, username });
+  const data = await api("join-room", { code, username, playerId });
+  if (data.error) {
+    landingError.textContent = data.error;
+    landingError.classList.remove("hidden");
+    return;
+  }
+  await subscribeToRoom(data.code);
+  enterRoom(data.code, data.mode, data.consensusLevel);
+  startHeartbeat(data.code);
+  await resyncFromSnapshot(data.code);
 });
 
-socket.on("join-error", ({ message }) => {
-  landingError.textContent = message;
-  landingError.classList.remove("hidden");
-});
+// ---- Heartbeat (replaces socket.io's connection/disconnect signal) ----
+let heartbeatInterval = null;
+function startHeartbeat(code) {
+  clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(() => {
+    api("heartbeat", { code, playerId });
+  }, 5000);
+}
+
+// Fetches the current room snapshot right after subscribing, in case
+// anything was published in the gap between the create/join response and
+// the Pusher subscription completing.
+async function resyncFromSnapshot(code) {
+  try {
+    const snap = await fetch(`/api/room-state?code=${encodeURIComponent(code)}`).then((r) => r.json());
+    if (snap.error) return;
+    applyLobbyUpdate(snap.lobby);
+    applyScoreboard(snap.scoreboard);
+  } catch (err) {
+    // best-effort — live Pusher events will catch it up regardless
+  }
+}
 
 // ---- Lobby ----
 const roomCodeDisplay = document.getElementById("room-code-display");
@@ -125,24 +201,20 @@ function enterRoom(code, mode, consensusLevel) {
   showScreen("lobby");
 }
 
-socket.on("room-created", ({ code, mode, consensusLevel }) => enterRoom(code, mode, consensusLevel));
-
-socket.on("room-joined", ({ code, mode, consensusLevel }) => enterRoom(code, mode, consensusLevel));
-
-consensusButtons.forEach(btn => {
+consensusButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
-    if (btn.disabled) return;
-    socket.emit("set-consensus-level", { level: Number(btn.dataset.consensus) });
+    if (btn.disabled || !currentRoomCode) return;
+    api("set-consensus-level", { code: currentRoomCode, level: Number(btn.dataset.consensus) });
   });
 });
 
-socket.on("lobby-update", ({ players, mode, consensusLevel, gameInProgress, minPlayers }) => {
+function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPlayers }) {
   currentMode = mode || currentMode;
   currentConsensusLevel = consensusLevel || currentConsensusLevel;
   lobbyMode.textContent = formatModeLabel(currentMode, currentConsensusLevel);
 
   playerList.innerHTML = "";
-  players.forEach(p => {
+  players.forEach((p) => {
     const li = document.createElement("li");
     const name = document.createElement("span");
     name.textContent = p.username;
@@ -159,7 +231,7 @@ socket.on("lobby-update", ({ players, mode, consensusLevel, gameInProgress, minP
   consensusDescription.classList.toggle("hidden", !isSync);
   if (isSync) {
     consensusDescription.textContent = CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || "";
-    consensusButtons.forEach(btn => {
+    consensusButtons.forEach((btn) => {
       const level = Number(btn.dataset.consensus);
       const required = CONSENSUS_REQUIRED[level];
       const unlocked = players.length >= required;
@@ -179,19 +251,21 @@ socket.on("lobby-update", ({ players, mode, consensusLevel, gameInProgress, minP
     lobbyStatus.textContent = "";
     readyBtn.disabled = false;
   }
-});
+}
 
-socket.on("room-reset", () => {
-  iAmReady = false;
-  readyBtn.textContent = "Ready Up";
-  stopCountdown();
-  showScreen("lobby");
-});
+function applyScoreboard(entries) {
+  scoreboardList.innerHTML = "";
+  entries.forEach((p) => {
+    const li = document.createElement("li");
+    li.textContent = `${p.username} — ${p.score}`;
+    scoreboardList.appendChild(li);
+  });
+}
 
 readyBtn.addEventListener("click", () => {
   iAmReady = !iAmReady;
   readyBtn.textContent = iAmReady ? "Cancel Ready" : "Ready Up";
-  socket.emit("toggle-ready");
+  api("toggle-ready", { code: currentRoomCode, playerId });
 });
 
 // ---- Game ----
@@ -204,6 +278,8 @@ const scoreboardHint = document.getElementById("scoreboard-hint");
 const timerSmall = document.getElementById("timer-small");
 
 let countdownInterval = null;
+let roundTimeoutHandle = null;
+let gameTimeoutFired = false;
 
 function stopCountdown() {
   clearInterval(countdownInterval);
@@ -214,6 +290,7 @@ function stopCountdown() {
 
 function startCountdown(endsAt) {
   clearInterval(countdownInterval);
+  gameTimeoutFired = false;
   timerSmall.classList.remove("hidden");
 
   function tick() {
@@ -222,95 +299,117 @@ function startCountdown(endsAt) {
     const mm = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
     const ss = String(totalSeconds % 60).padStart(2, "0");
     timerSmall.textContent = `⏱ ${mm}:${ss}`;
-    if (remainingMs <= 0) clearInterval(countdownInterval);
+    if (remainingMs <= 0) {
+      clearInterval(countdownInterval);
+      if (!gameTimeoutFired) {
+        gameTimeoutFired = true;
+        api("game-timeout", { code: currentRoomCode });
+      }
+    }
   }
 
   tick();
   countdownInterval = setInterval(tick, 250);
 }
 
-socket.on("game-started", ({ mode, consensusLevel, endsAt }) => {
-  showScreen("game");
-  guessInput.value = "";
-  guessInput.focus();
-  currentMode = mode || currentMode;
-  currentConsensusLevel = consensusLevel || currentConsensusLevel;
-  modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
-  scoreboardHint.textContent = SCOREBOARD_HINTS[mode] || "";
-  if (mode === "sync" && endsAt) {
-    startCountdown(endsAt);
-  } else {
+function armRoundTimeout(fallDurationMs) {
+  clearTimeout(roundTimeoutHandle);
+  roundTimeoutHandle = setTimeout(() => {
+    api("round-timeout", { code: currentRoomCode });
+  }, fallDurationMs + 250); // small buffer past the visual fall duration
+}
+
+function bindChannelEvents(ch) {
+  ch.bind("lobby-update", applyLobbyUpdate);
+  ch.bind("scoreboard", applyScoreboard);
+
+  ch.bind("room-reset", () => {
+    iAmReady = false;
+    readyBtn.textContent = "Ready Up";
     stopCountdown();
-  }
-});
-
-socket.on("emoji-spawn", ({ emoji, fallDuration }) => {
-  roundFeedback.textContent = "";
-  fallingEmojiEl.textContent = emoji;
-  fallingEmojiEl.style.transition = "none";
-  fallingEmojiEl.style.top = "-80px";
-  // Force reflow so the next transition actually animates from the top.
-  void fallingEmojiEl.offsetHeight;
-  fallingEmojiEl.style.transition = `top ${fallDuration}ms linear`;
-  fallingEmojiEl.style.top = `${fallZone.clientHeight - 20}px`;
-  guessInput.value = "";
-  guessInput.focus();
-});
-
-socket.on("emoji-correct", ({ username, guess }) => {
-  roundFeedback.textContent = `${username} got it! ("${guess}")`;
-});
-
-socket.on("emoji-miss", () => {
-  roundFeedback.textContent = "Missed it — next one incoming…";
-});
-
-// Never reveals which word anyone typed — just how close the room is to
-// consensus (best overlap so far vs. how many are needed), so guessing
-// stays private until the room actually lands on a shared word.
-socket.on("sync-progress", ({ bestCount, required }) => {
-  roundFeedback.textContent = `Closest match: ${bestCount}/${required} players — keep typing words until enough match!`;
-});
-
-socket.on("scoreboard", (entries) => {
-  scoreboardList.innerHTML = "";
-  entries.forEach(p => {
-    const li = document.createElement("li");
-    li.textContent = `${p.username} — ${p.score}`;
-    scoreboardList.appendChild(li);
+    clearTimeout(roundTimeoutHandle);
+    showScreen("lobby");
   });
-});
+
+  ch.bind("game-started", ({ mode, consensusLevel, endsAt }) => {
+    showScreen("game");
+    guessInput.value = "";
+    guessInput.focus();
+    currentMode = mode || currentMode;
+    currentConsensusLevel = consensusLevel || currentConsensusLevel;
+    modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
+    scoreboardHint.textContent = SCOREBOARD_HINTS[mode] || "";
+    if (mode === "sync" && endsAt) {
+      startCountdown(endsAt);
+    } else {
+      stopCountdown();
+    }
+  });
+
+  ch.bind("emoji-spawn", ({ emoji, fallDuration }) => {
+    roundFeedback.textContent = "";
+    fallingEmojiEl.textContent = emoji;
+    fallingEmojiEl.style.transition = "none";
+    fallingEmojiEl.style.top = "-80px";
+    // Force reflow so the next transition actually animates from the top.
+    void fallingEmojiEl.offsetHeight;
+    fallingEmojiEl.style.transition = `top ${fallDuration}ms linear`;
+    fallingEmojiEl.style.top = `${fallZone.clientHeight - 20}px`;
+    guessInput.value = "";
+    guessInput.focus();
+    armRoundTimeout(fallDuration);
+  });
+
+  ch.bind("emoji-correct", ({ username, guess }) => {
+    clearTimeout(roundTimeoutHandle);
+    roundFeedback.textContent = `${username} got it! ("${guess}")`;
+  });
+
+  ch.bind("emoji-miss", () => {
+    clearTimeout(roundTimeoutHandle);
+    roundFeedback.textContent = "Missed it — next one incoming…";
+  });
+
+  // Never reveals which word anyone typed — just how close the room is to
+  // consensus (best overlap so far vs. how many are needed), so guessing
+  // stays private until the room actually lands on a shared word.
+  ch.bind("sync-progress", ({ bestCount, required }) => {
+    roundFeedback.textContent = `Closest match: ${bestCount}/${required} players — keep typing words until enough match!`;
+  });
+
+  ch.bind("game-over", ({ mode, winner, teamScore, scoreboard }) => {
+    clearTimeout(roundTimeoutHandle);
+    stopCountdown();
+    if (mode === "sync") {
+      gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
+    } else {
+      gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
+    }
+    gameoverScoreboardList.innerHTML = "";
+    scoreboard.forEach((p) => {
+      const li = document.createElement("li");
+      li.textContent = `${p.username} — ${p.score}`;
+      gameoverScoreboardList.appendChild(li);
+    });
+    showScreen("gameover");
+    setTimeout(() => api("room-reset", { code: currentRoomCode }), 4000);
+  });
+}
 
 // ---- Game over ----
 const gameoverWinner = document.getElementById("gameover-winner");
 const gameoverScoreboardList = document.getElementById("gameover-scoreboard-list");
 const playAgainBtn = document.getElementById("play-again-btn");
 
-socket.on("game-over", ({ mode, winner, teamScore, scoreboard }) => {
-  stopCountdown();
-  if (mode === "sync") {
-    gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
-  } else {
-    gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
-  }
-  gameoverScoreboardList.innerHTML = "";
-  scoreboard.forEach(p => {
-    const li = document.createElement("li");
-    li.textContent = `${p.username} — ${p.score}`;
-    gameoverScoreboardList.appendChild(li);
-  });
-  showScreen("gameover");
-});
-
 playAgainBtn.addEventListener("click", () => {
   window.location.reload();
 });
 
-function submitGuess() {
+async function submitGuess() {
   const guess = guessInput.value.trim();
   if (!guess) return;
-  socket.emit("submit-guess", { guess });
   guessInput.value = ""; // clear immediately so the next word can be typed right away — no "locking in"
+  await api("submit-guess", { code: currentRoomCode, playerId, guess });
 }
 
 guessInput.addEventListener("keydown", (e) => {
