@@ -1,10 +1,11 @@
 :root {
-  --ink: #191825;
-  --panel: #232134;
-  --amber: #FFB627;
-  --coral: #FF6B6B;
-  --paper: #F4F1EA;
-  --teal: #00A896;
+  --ink: #0d0b1e;
+  --panel: #1a1633;
+  --amber: #ffe93d;
+  --coral: #ff2e88;
+  --paper: #f4f1fa;
+  --teal: #00fff2;
+  --green: #39ff88;
 }
 
 * { box-sizing: border-box; }
@@ -14,10 +15,11 @@ html, body {
   height: 100%;
   background: var(--ink);
   color: var(--paper);
-  font-family: 'Inter', sans-serif;
+  font-family: 'VT323', monospace;
+  font-size: 20px;
 }
 
-.display { font-family: 'Baloo 2', sans-serif; }
+.display { font-family: 'Press Start 2P', monospace; line-height: 1.4; }
 
 #app {
   height: 100%;
@@ -43,33 +45,36 @@ html, body {
 
 h1.display {
   color: var(--amber);
-  font-size: 2.4rem;
+  font-size: clamp(1.1rem, 6vw, 1.8rem);
   margin: 0;
+  text-shadow: 3px 3px 0 var(--coral);
 }
 
 .subtitle {
   margin: 0 0 10px;
   color: var(--teal);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  font-size: 1.15rem;
 }
 
 input {
   width: 100%;
   padding: 12px 16px;
-  font-size: 1.1rem;
-  font-family: 'Inter', sans-serif;
-  border-radius: 10px;
-  border: 2px solid var(--panel);
+  font-size: 1.3rem;
+  font-family: 'VT323', monospace;
+  border-radius: 6px;
+  border: 3px solid var(--panel);
   background: var(--panel);
   color: var(--paper);
   outline: none;
   text-align: center;
+  letter-spacing: 0.04em;
 }
 
 input:focus { border-color: var(--amber); }
+
+input::placeholder { color: #6b6690; }
 
 .button-row {
   display: flex;
@@ -78,42 +83,57 @@ input:focus { border-color: var(--amber); }
 }
 
 .btn {
-  font-family: 'Baloo 2', sans-serif;
-  font-size: 1.05rem;
-  font-weight: 700;
-  padding: 12px 24px;
-  border-radius: 10px;
-  border: none;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  font-weight: 400;
+  padding: 14px 20px;
+  border-radius: 6px;
+  border: 3px solid transparent;
   cursor: pointer;
-  transition: transform 0.15s;
   flex: 1;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
 }
 
-.btn:hover { transform: translateY(-2px); }
+/* Hover-only effects are wrapped so touchscreens (no real hover) never hit
+   the "first tap simulates hover, second tap clicks" trap some mobile
+   browsers apply to any element with a :hover rule. */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.6); }
+}
+
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+}
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
   transform: none;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
 }
 
-.btn-primary { background: var(--coral); color: var(--ink); }
-.btn-secondary { background: var(--teal); color: var(--ink); }
+.btn-primary { background: var(--coral); color: var(--ink); border-color: var(--coral); }
+.btn-secondary { background: var(--teal); color: var(--ink); border-color: var(--teal); }
 
 .btn-mode {
   background: var(--panel);
   color: var(--paper);
-  border: 2px solid var(--panel);
-  font-size: 0.95rem;
-  line-height: 1.4;
+  border: 3px solid #332d55;
+  font-size: 0.68rem;
+  line-height: 1.5;
 }
 
 .btn-mode .mode-desc {
   display: block;
-  font-family: 'Inter', sans-serif;
+  font-family: 'VT323', monospace;
   font-weight: 400;
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   color: #9c98b5;
+  margin-top: 6px;
 }
 
 .btn-mode.active {
@@ -125,40 +145,42 @@ input:focus { border-color: var(--amber); }
 
 .mode-badge {
   color: var(--amber);
-  font-weight: 700;
-  font-size: 0.85rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.68rem;
   margin: 0 0 6px;
 }
 
 .divider {
   color: #6b6885;
-  font-size: 0.85rem;
+  font-size: 1.1rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.15em;
 }
 
 .error {
   color: var(--coral);
-  font-weight: 600;
+  font-size: 1.15rem;
 }
 
 .error.hidden { display: none; }
 
 .room-code {
-  font-family: 'Baloo 2', sans-serif;
-  font-size: 3rem;
-  font-weight: 800;
-  letter-spacing: 0.15em;
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(1.6rem, 8vw, 2.4rem);
+  letter-spacing: 0.12em;
   color: var(--amber);
   background: var(--panel);
-  padding: 10px 24px;
-  border-radius: 12px;
+  border: 3px solid var(--amber);
+  padding: 14px 20px;
+  border-radius: 8px;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
 }
 
 .hint {
   color: #9c98b5;
-  font-size: 0.85rem;
+  font-size: 1.05rem;
   margin: 0;
+  line-height: 1.4;
 }
 
 .player-list {
@@ -173,24 +195,26 @@ input:focus { border-color: var(--amber); }
 
 .player-list li {
   background: var(--panel);
+  border: 2px solid #332d55;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: 6px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-weight: 600;
+  font-size: 1.2rem;
 }
 
 .ready-badge {
-  font-size: 0.8rem;
-  padding: 3px 10px;
-  border-radius: 20px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.55rem;
+  padding: 5px 10px;
+  border-radius: 4px;
   background: #3a3752;
   color: #9c98b5;
 }
 
 .ready-badge.ready {
-  background: var(--teal);
+  background: var(--green);
   color: var(--ink);
 }
 
@@ -205,25 +229,23 @@ input:focus { border-color: var(--amber); }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.65rem;
 }
 
 #room-code-small {
-  font-weight: 700;
   color: var(--amber);
   letter-spacing: 0.1em;
 }
 
 #mode-small {
-  font-weight: 600;
   color: var(--teal);
-  font-size: 0.85rem;
 }
 
 #timer-small {
-  font-family: 'Baloo 2', sans-serif;
-  font-weight: 700;
+  font-family: 'Press Start 2P', monospace;
   color: var(--coral);
-  font-size: 1rem;
+  font-size: 0.75rem;
 }
 
 #timer-small.hidden { display: none; }
@@ -232,7 +254,8 @@ input:focus { border-color: var(--amber); }
   width: 100%;
   height: 260px;
   background: var(--panel);
-  border-radius: 14px;
+  border: 3px solid #332d55;
+  border-radius: 10px;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -250,22 +273,24 @@ input:focus { border-color: var(--amber); }
 #round-feedback {
   position: absolute;
   bottom: 10px;
-  font-weight: 700;
+  font-size: 1.2rem;
   color: var(--teal);
 }
 
 #scoreboard {
   width: 100%;
   background: var(--panel);
-  border-radius: 12px;
+  border: 3px solid #332d55;
+  border-radius: 10px;
   padding: 14px 18px;
 }
 
 #scoreboard h2 {
-  font-family: 'Baloo 2', sans-serif;
-  font-size: 1rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.75rem;
   color: var(--amber);
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+  font-weight: 400;
 }
 
 #scoreboard-list {
@@ -275,28 +300,29 @@ input:focus { border-color: var(--amber); }
 }
 
 #scoreboard-list li {
-  font-weight: 600;
+  font-size: 1.2rem;
   padding: 2px 0;
 }
 
 /* GAME OVER SCREEN */
 #gameover-winner {
   color: var(--amber);
-  font-weight: 700;
 }
 
 #gameover-scoreboard {
   width: 100%;
   background: var(--panel);
-  border-radius: 12px;
+  border: 3px solid #332d55;
+  border-radius: 10px;
   padding: 14px 18px;
 }
 
 #gameover-scoreboard h2 {
-  font-family: 'Baloo 2', sans-serif;
-  font-size: 1rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.75rem;
   color: var(--amber);
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+  font-weight: 400;
 }
 
 #gameover-scoreboard-list {
@@ -306,6 +332,6 @@ input:focus { border-color: var(--amber); }
 }
 
 #gameover-scoreboard-list li {
-  font-weight: 600;
+  font-size: 1.2rem;
   padding: 2px 0;
 }

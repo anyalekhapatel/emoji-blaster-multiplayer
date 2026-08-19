@@ -5,308 +5,94 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Emoji Blaster</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --ink: #191825;
-    --panel: #232134;
-    --amber: #FFB627;
-    --teal: #00A896;
-    --coral: #FF6B6B;
-    --paper: #F4F1EA;
-  }
-
-  * { box-sizing: border-box; }
-
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: var(--ink);
-    color: var(--paper);
-    font-family: 'Inter', sans-serif;
-    overflow-x: hidden;
-  }
-
-  .arcade {
-    position: relative;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 32px 20px 64px;
-  }
-
-  /* Falling emoji marquee background */
-  .marquee {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-    opacity: 0.35;
-  }
-  .drop {
-    position: absolute;
-    top: -60px;
-    font-size: 34px;
-    animation: fall linear infinite;
-  }
-  @keyframes fall {
-    to { transform: translateY(110vh) rotate(20deg); }
-  }
-
-  header {
-    position: relative;
-    z-index: 2;
-    text-align: center;
-    margin-bottom: 44px;
-  }
-
-  .eyebrow {
-    font-family: 'Inter', sans-serif;
-    font-weight: 700;
-    font-size: 13px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--teal);
-    margin: 0 0 10px;
-  }
-
-  h1 {
-    font-family: 'Baloo 2', sans-serif;
-    font-weight: 800;
-    font-size: clamp(42px, 9vw, 84px);
-    margin: 0;
-    letter-spacing: -0.01em;
-    line-height: 0.95;
-    color: var(--paper);
-    text-shadow: 4px 4px 0 var(--coral);
-  }
-
-  h1 span {
-    display: inline-block;
-    animation: bob 2.4s ease-in-out infinite;
-  }
-  h1 span:nth-child(2) { animation-delay: 0.15s; }
-
-  @keyframes bob {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
-  }
-
-  .tagline {
-    margin-top: 14px;
-    font-size: 16px;
-    color: #C8C4D8;
-    font-weight: 600;
-  }
-
-  /* Mode selection cards */
-  .modes {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-    justify-content: center;
-    max-width: 720px;
-  }
-
-  .card {
-    background: var(--panel);
-    border: 3px solid transparent;
-    border-radius: 20px;
-    padding: 28px 26px;
-    width: 280px;
-    text-align: left;
-    cursor: pointer;
-    transition: transform 0.15s ease, border-color 0.15s ease;
-    font-family: inherit;
-    color: inherit;
-  }
-
-  .card:hover, .card:focus-visible {
-    transform: translateY(-4px);
-    border-color: var(--amber);
-    outline: none;
-  }
-
-  .card .icon {
-    font-size: 40px;
-    margin-bottom: 14px;
-    display: block;
-  }
-
-  .card h2 {
-    font-family: 'Baloo 2', sans-serif;
-    font-size: 24px;
-    margin: 0 0 8px;
-  }
-
-  .card p {
-    margin: 0;
-    font-size: 14px;
-    color: #ABA6C2;
-    line-height: 1.5;
-  }
-
-  .card.solo .icon { color: var(--amber); }
-  .card.multi .icon { color: var(--teal); }
-
-  /* Multiplayer room-code panel */
-  .room-panel {
-    display: none;
-    position: relative;
-    z-index: 2;
-    margin-top: 28px;
-    background: var(--panel);
-    border-radius: 20px;
-    padding: 28px 30px;
-    width: min(90vw, 420px);
-    text-align: center;
-  }
-
-  .room-panel.open { display: block; }
-
-  .room-panel h3 {
-    font-family: 'Baloo 2', sans-serif;
-    font-size: 20px;
-    margin: 0 0 6px;
-  }
-
-  .room-panel .status {
-    font-size: 13px;
-    color: var(--coral);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 18px;
-  }
-
-  .room-actions {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .room-actions input {
-    flex: 1;
-    min-width: 140px;
-    padding: 12px 14px;
-    border-radius: 10px;
-    border: 2px solid #3A3752;
-    background: var(--ink);
-    color: var(--paper);
-    font-size: 16px;
-    font-family: 'Inter', sans-serif;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .room-actions input:focus {
-    outline: none;
-    border-color: var(--teal);
-  }
-
-  button.primary {
-    padding: 12px 20px;
-    border-radius: 10px;
-    border: none;
-    background: var(--amber);
-    color: var(--ink);
-    font-weight: 700;
-    font-size: 15px;
-    cursor: pointer;
-    font-family: 'Inter', sans-serif;
-  }
-
-  button.primary:hover { filter: brightness(1.08); }
-
-  .back-link {
-    display: inline-block;
-    margin-top: 16px;
-    font-size: 13px;
-    color: #8B87A3;
-    cursor: pointer;
-    text-decoration: underline;
-    background: none;
-    border: none;
-    font-family: inherit;
-  }
-</style>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="app">
 
-<div class="arcade">
-  <div class="marquee" id="marquee"></div>
+  <!-- LANDING -->
+  <section id="screen-landing" class="screen">
+    <h1 class="display">Emoji Blaster</h1>
+    <p class="subtitle">Type the keyword. Sync with your team. Beat the clock.</p>
 
-  <header>
-    <p class="eyebrow">Type Fast. Match Faster.</p>
-    <h1><span>Emoji</span> <span>Blaster</span></h1>
-    <p class="tagline">Type the keyword before it lands.</p>
-  </header>
+    <input id="username-input" type="text" placeholder="Your name" maxlength="16" autocomplete="off">
 
-  <div class="modes" id="modeSelect">
-    <button class="card solo" id="soloBtn">
-      <span class="icon">🎯</span>
-      <h2>Solo</h2>
-      <p>Play alone across three difficulty levels — classic, double-match, and shared-keyword mode.</p>
-    </button>
-
-    <button class="card multi" id="multiBtn">
-      <span class="icon">👥</span>
-      <h2>Multiplayer</h2>
-      <p>Create or join a room with a code and play together in real time.</p>
-    </button>
-  </div>
-
-  <div class="room-panel" id="roomPanel">
-    <h3>Multiplayer</h3>
-    <p class="status">Coming soon</p>
-    <div class="room-actions">
-      <input type="text" placeholder="ROOM CODE" maxlength="6" id="roomCodeInput">
-      <button class="primary" id="joinBtn" disabled>Join Room</button>
+    <div class="button-row">
+      <button type="button" id="create-room-btn" class="btn btn-primary">Create Room</button>
     </div>
-    <br>
-    <button class="primary" id="createBtn" disabled>Create New Room</button>
-    <div>
-      <button class="back-link" id="backBtn">← Back to menu</button>
+
+    <div class="divider">or</div>
+
+    <div class="button-row">
+      <input id="join-code-input" type="text" placeholder="ROOM CODE" maxlength="5" autocomplete="off">
+      <button type="button" id="join-room-btn" class="btn btn-secondary">Join</button>
     </div>
-  </div>
+
+    <p id="landing-error" class="error hidden"></p>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="screen-lobby" class="screen hidden">
+    <h1 class="display">Room</h1>
+    <div id="room-code-display" class="room-code"></div>
+    <p class="hint">Share this code so others can join</p>
+    <p id="lobby-mode" class="mode-badge"></p>
+
+    <div class="button-row hidden" id="consensus-select">
+      <button type="button" class="btn btn-mode" data-consensus="1">Level 1<br><span class="mode-desc">2 players match</span></button>
+      <button type="button" class="btn btn-mode" data-consensus="2">Level 2<br><span class="mode-desc">3 players match</span></button>
+      <button type="button" class="btn btn-mode" data-consensus="3">Level 3<br><span class="mode-desc">4 players match</span></button>
+    </div>
+    <p class="hint hidden" id="consensus-description"></p>
+
+    <ul id="player-list" class="player-list"></ul>
+
+    <p id="lobby-status" class="hint"></p>
+    <button type="button" id="ready-btn" class="btn btn-primary">Ready Up</button>
+    <button type="button" id="start-now-btn" class="btn btn-secondary hidden">Start Now</button>
+    <p class="hint">Starts automatically once everyone's ready — or hit Start Now once enough players are in.</p>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen hidden">
+    <div id="game-hud">
+      <div id="room-code-small"></div>
+      <div id="mode-small"></div>
+      <div id="timer-small" class="hidden"></div>
+    </div>
+
+    <div id="fall-zone">
+      <div id="falling-emoji"></div>
+      <div id="round-feedback"></div>
+    </div>
+
+    <input id="guess-input" type="text" placeholder="Type the keyword and press Enter…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+    <aside id="scoreboard">
+      <h2>Scoreboard <span id="scoreboard-hint" class="hint">(shared team score — beat the clock!)</span></h2>
+      <ol id="scoreboard-list"></ol>
+    </aside>
+  </section>
+
+  <!-- GAME OVER -->
+  <section id="screen-gameover" class="screen hidden">
+    <h1 class="display">Game Over</h1>
+    <p id="gameover-winner" class="subtitle"></p>
+
+    <aside id="gameover-scoreboard">
+      <h2>Final Score</h2>
+      <ol id="gameover-scoreboard-list"></ol>
+    </aside>
+
+    <div class="button-row">
+      <button type="button" id="play-again-btn" class="btn btn-primary">Play Again</button>
+    </div>
+  </section>
+
 </div>
 
-<script>
-  // Falling emoji marquee background
-  const emojis = ['😡','🍎','🍌','🤣','👏','😳','😎','🤙','💪','💯','🥶','😱'];
-  const marquee = document.getElementById('marquee');
-  for (let i = 0; i < 14; i++) {
-    const el = document.createElement('span');
-    el.className = 'drop';
-    el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
-    el.style.left = Math.random() * 100 + '%';
-    el.style.animationDuration = (6 + Math.random() * 6) + 's';
-    el.style.animationDelay = (Math.random() * 6) + 's';
-    marquee.appendChild(el);
-  }
-
-  // Mode navigation
-  document.getElementById('soloBtn').addEventListener('click', () => {
-    window.location.href = 'game.html'; // your existing Construct 3 export
-  });
-
-  const modeSelect = document.getElementById('modeSelect');
-  const roomPanel = document.getElementById('roomPanel');
-
-  document.getElementById('multiBtn').addEventListener('click', () => {
-  window.location.href = 'multiplayer.html';
-});
-
-  document.getElementById('backBtn').addEventListener('click', () => {
-    roomPanel.classList.remove('open');
-    modeSelect.style.display = 'flex';
-  });
-</script>
-
+<script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
+<script src="client.js"></script>
 </body>
 </html>

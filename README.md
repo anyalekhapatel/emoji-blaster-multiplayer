@@ -1,10 +1,11 @@
 # Emoji Blaster
 
-A typing-defense game: type the keyword before the emoji lands. Play solo
-across three difficulty levels, or create/join a room for real-time
-multiplayer. Everything runs on Vercel: the landing page and solo game are
-static files, and multiplayer is a set of serverless functions backed by
-Redis (room state) and Pusher Channels (realtime broadcast).
+A typing party game: type the keyword before the emoji lands, in sync with
+your team. Everyone types freely — an emoji clears once enough distinct
+players have independently typed the same word — and the room races a 60s
+clock together, not each other. Runs entirely on Vercel: a static
+single-page frontend plus a set of serverless functions backed by Redis
+(room state) and Pusher Channels (realtime broadcast).
 
 ## Why serverless + Redis + Pusher, not a Socket.io server
 
@@ -19,50 +20,43 @@ Channels instead of a socket connection.
 ## What's in here
 
 ```
-emojiDB.js          ← emoji → keyword list used by multiplayer (PLACEHOLDER — see note below)
+emojiDB.js          ← emoji → keyword list used by the game (PLACEHOLDER — see note below)
 lib/
-  room-store.js      ← Redis read/write/prune helpers for room state
-  game-logic.js       ← pure game rules (ported from the old server.js) — spawning,
-                         scoring, classic/sync guess handling, consensus matching
+  room-store.js      ← Redis read/write/prune helpers for room state, atomic
+                         compare-and-swap via a Lua script (see note below)
+  game-logic.js       ← pure game rules — spawning, consensus matching, scoring
   pusher.js            ← shared Pusher server SDK instance + publish helper
 api/
   config.js          ← GET: public Pusher key/cluster for the client
   create-room.js      ← POST: create a room
   join-room.js         ← POST: join a room
   toggle-ready.js       ← POST: ready up / cancel ready
-  set-consensus-level.js ← POST: change a Sync-mode room's consensus level
-  submit-guess.js        ← POST: submit a keyword guess (classic or sync)
-  round-timeout.js        ← POST: client-nudged "the falling emoji timed out" tick
-  game-timeout.js          ← POST: client-nudged "sync mode's 60s clock ran out" tick
-  room-reset.js             ← POST: client-nudged "return to lobby after Game Over" tick
-  heartbeat.js               ← POST: keep-alive ping (replaces socket disconnect detection)
-  room-state.js                ← GET: room snapshot, used to resync right after joining
+  force-start.js         ← POST: start the game once enough players are in,
+                             even if not everyone's readied up
+  set-consensus-level.js  ← POST: change a room's consensus level
+  submit-guess.js           ← POST: submit a keyword guess
+  round-timeout.js           ← POST: client-nudged "the falling emoji timed out" tick
+  game-timeout.js              ← POST: client-nudged "the 60s clock ran out" tick
+  room-reset.js                  ← POST: client-nudged "return to lobby after Game Over" tick
+  heartbeat.js                     ← POST: keep-alive ping (replaces socket disconnect detection)
+  room-state.js                      ← GET: room snapshot, used to resync right after joining
 public/
-  index.html         ← landing page (Solo / Multiplayer mode select)
-  game.html           ← solo game (vanilla JS + canvas, no external engine)
-  game.js
-  data.js             ← real, verified emoji → keyword dataset used by the solo game
-  media/               ← solo game sound effects
-  multiplayer.html    ← username entry, room create/join, game + scoreboard
-  client.js            ← multiplayer.html's client — fetch() calls + Pusher subscription
-  style.css            ← shared styling for multiplayer.html
+  index.html         ← the whole app: username entry, room create/join, lobby, game, scoreboard
+  client.js            ← fetch() calls + Pusher subscription behind index.html
+  style.css             ← retro pixel-arcade theme
 ```
 
 ## ⚠️ `emojiDB.js` still has placeholder keyword data
 
-`emojiDB.js` (used by multiplayer) was reconstructed from memory and is NOT
-guaranteed to match the real dataset. The real, verified data already lives
-in this repo at `public/data.js` (used by the solo game) — it just hasn't
-been ported into `emojiDB.js`'s `{ "emoji": [...] }` shape yet. Note also
-that `emojiDB.js` doesn't export a `sharedKeywords` function, which
-`lib/game-logic.js` calls for Level 3 rooms — this was already broken before
-the Vercel migration and is out of scope here; multiplayer's `level` is
-always 1 in practice since the client never exposes a way to change it.
+`emojiDB.js` was reconstructed from memory and is NOT guaranteed to match a
+verified dataset — swap it out if you have the real keyword lists.
 
 ## Deploying on Vercel
 
 1. **Connect this repo** as a Vercel project (framework preset: Other — no
-   build step needed).
+   build step needed; `vercel.json` pins this explicitly since the project
+   was previously configured for a traditional Node server and Vercel's
+   dashboard setting doesn't always update itself when the code changes).
 2. **Add a Redis database**: in the Vercel dashboard, go to your project →
    Storage → Marketplace, and install an **Upstash for Redis** integration
    (Vercel's own "Vercel KV" product is deprecated — Upstash is the current
@@ -90,51 +84,45 @@ vercel dev
 
 Then open the URL `vercel dev` prints (defaults to `http://localhost:3000`).
 
-## Multiplayer modes
+## How a room works
 
-Chosen by the room creator when they create a room (joiners inherit it):
+Players type keywords freely — nothing ever "locks in." Each player
+accumulates a running list of every valid keyword they've typed during the
+current round, and as soon as enough distinct players have independently
+typed the same word, the emoji clears. Nobody ever sees what anyone else
+typed until that happens — only a private "wrong" nudge to whoever
+mistyped, and a headcount of how close the room is to a match.
 
-- **Race** — first player to land a correct keyword wins the point. Ends
-  the game as soon as a player reaches 10 points.
-- **Sync** — the room works together, not against each other. Players type
-  keywords freely (no "locking in" — guesses accumulate across the round);
-  an emoji clears once enough distinct players have independently typed the
-  same word. Nobody ever sees what anyone else typed until that happens —
-  only a private "wrong" nudge to whoever mistyped, and a headcount of how
-  close the room is. Sync mode is timer-based (60s), not score-based: the
-  shared team score is however many emoji the room synced before time ran
-  out.
+The game is timer-based (60s), not score-based: the shared team score is
+however many emoji the room synced together before time ran out.
 
-  **Consensus levels** (Sync mode only, picked in the lobby — not before
-  anyone's joined, since it needs to know how many players are actually in
-  the room): Level 1 needs 2 players to agree, Level 2 needs 3, Level 3
-  needs 4. The room can hold more players than the threshold — a 6-person
-  room on Level 1 just needs any 2 of those 6 to land on the same word.
-  Each level is locked until enough players have joined to reach it.
+**Consensus levels**, picked in the lobby (not before anyone's joined,
+since it needs to know how many players are actually in the room): Level 1
+needs 2 players to agree, Level 2 needs 3, Level 3 needs 4. The room can
+hold more players than the threshold — a 6-person room on Level 1 just
+needs any 2 of those 6 to land on the same word. Each level stays locked
+until enough players have joined to reach it.
 
-Both modes require at least 2 ready players before a game starts (Sync
-mode's minimum scales with its consensus level), and a player who joins
-mid-game is held in the lobby — not dropped into the live round — until the
-game ends and the room resets for a rematch.
+A room auto-starts once everyone's clicked Ready, matching the current
+consensus level's minimum. There's also a **Start Now** button that appears
+once enough players have joined, regardless of ready state — so one player
+sitting idle (or refusing to ready up) can't block the rest of the group
+indefinitely.
+
+A player who joins mid-game is held in the lobby — not dropped into the
+live round — until the game ends and the room resets for a rematch.
 
 ## Known limitations (current version)
 
-- Both multiplayer modes only recreate Level 1's mechanic (single falling
-  emoji, one keyword per round) — Levels 2 and 3's difficulty mechanics
-  aren't wired into multiplayer, and Level 3 rooms would error given the
-  missing `sharedKeywords` export noted above (pre-existing, not new here).
-- No MongoDB analytics persistence anymore (dropped in the Vercel
-  migration — it was already best-effort). Key game events still log via
-  `console.log` inside each `/api` handler, visible in Vercel's function
-  logs.
-- Timers (the per-round fall duration, Sync mode's 60s clock, and the
+- Timers (the per-round fall duration, the 60s game clock, and the
   post-Game-Over pause before a room resets) are driven by each connected
   client's local countdown calling a dedicated `/api/*-timeout` endpoint
   when it elapses, since there's no persistent server process to hold a
   `setTimeout` — those endpoints are idempotent, so it's safe if multiple
   clients' timers fire around the same moment.
-- Player presence is heartbeat-based (a ping every 5s, pruned after 15s of
+- Player presence is heartbeat-based (a ping every 5s, pruned after 20s of
   silence) rather than an instant disconnect signal, so a closed tab takes
-  up to ~15s to be reflected for other players in the room.
-- The solo game's sound effects are in `public/media/`, but `game.js` loads
-  them from a `sounds/` path — audio silently fails to play.
+  up to ~20s to be reflected for other players in the room.
+- No MongoDB/analytics persistence — dropped in the Vercel migration (it
+  was already best-effort). Key game events still log via `console.log`
+  inside each `/api` handler, visible in Vercel's function logs.

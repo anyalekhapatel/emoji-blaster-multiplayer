@@ -49,10 +49,6 @@ const screens = {
   gameover: document.getElementById("screen-gameover"),
 };
 
-const MODE_LABELS = {
-  classic: "Race — first correct guess wins",
-};
-
 const CONSENSUS_REQUIRED = { 1: 2, 2: 3, 3: 4 };
 
 const CONSENSUS_LABELS = {
@@ -67,17 +63,11 @@ const CONSENSUS_DESCRIPTIONS = {
   3: "An emoji clears once at least 4 players enter the same keyword. The room can hold more than 4 — only 4 need to match.",
 };
 
-function formatModeLabel(mode, consensusLevel) {
-  if (mode === "sync") {
-    return `Sync — ${CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1]}`;
-  }
-  return MODE_LABELS[mode] || mode;
+function formatModeLabel(consensusLevel) {
+  return CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1];
 }
 
-const SCOREBOARD_HINTS = {
-  classic: "(first to 10 wins)",
-  sync: "(shared team score — beat the clock!)",
-};
+const SCOREBOARD_HINT = "(shared team score — beat the clock!)";
 
 function showScreen(name) {
   Object.values(screens).forEach((s) => s.classList.add("hidden"));
@@ -102,28 +92,17 @@ function getUsername() {
   return name;
 }
 
-// ---- Mode select (only matters for room creation; joiners inherit the room's mode) ----
-const modeButtons = Array.from(document.querySelectorAll("#mode-select .btn-mode"));
-let selectedMode = "classic";
-
-modeButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    selectedMode = btn.dataset.mode;
-    modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
-  });
-});
-
 createRoomBtn.addEventListener("click", async () => {
   const username = getUsername();
   if (!username) return;
-  const data = await api("create-room", { username, mode: selectedMode, playerId });
+  const data = await api("create-room", { username, playerId });
   if (data.error) {
     landingError.textContent = data.error;
     landingError.classList.remove("hidden");
     return;
   }
   await subscribeToRoom(data.code);
-  enterRoom(data.code, data.mode, data.consensusLevel);
+  enterRoom(data.code, data.consensusLevel);
   startHeartbeat(data.code);
   await resyncFromSnapshot(data.code);
 });
@@ -144,7 +123,7 @@ joinRoomBtn.addEventListener("click", async () => {
     return;
   }
   await subscribeToRoom(data.code);
-  enterRoom(data.code, data.mode, data.consensusLevel);
+  enterRoom(data.code, data.consensusLevel);
   startHeartbeat(data.code);
   await resyncFromSnapshot(data.code);
 });
@@ -180,22 +159,21 @@ const modeSmall = document.getElementById("mode-small");
 const playerList = document.getElementById("player-list");
 const lobbyStatus = document.getElementById("lobby-status");
 const readyBtn = document.getElementById("ready-btn");
+const startNowBtn = document.getElementById("start-now-btn");
 const consensusSelect = document.getElementById("consensus-select");
 const consensusButtons = Array.from(document.querySelectorAll("#consensus-select .btn-mode"));
 const consensusDescription = document.getElementById("consensus-description");
 
 let currentRoomCode = null;
-let currentMode = "classic";
 let currentConsensusLevel = 1;
 let iAmReady = false;
 
-function enterRoom(code, mode, consensusLevel) {
+function enterRoom(code, consensusLevel) {
   currentRoomCode = code;
-  currentMode = mode || "classic";
   currentConsensusLevel = consensusLevel || 1;
   roomCodeDisplay.textContent = code;
   roomCodeSmall.textContent = code;
-  const label = formatModeLabel(currentMode, currentConsensusLevel);
+  const label = formatModeLabel(currentConsensusLevel);
   lobbyMode.textContent = label;
   modeSmall.textContent = label;
   showScreen("lobby");
@@ -208,10 +186,9 @@ consensusButtons.forEach((btn) => {
   });
 });
 
-function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPlayers }) {
-  currentMode = mode || currentMode;
+function applyLobbyUpdate({ players, consensusLevel, gameInProgress, minPlayers }) {
   currentConsensusLevel = consensusLevel || currentConsensusLevel;
-  lobbyMode.textContent = formatModeLabel(currentMode, currentConsensusLevel);
+  lobbyMode.textContent = formatModeLabel(currentConsensusLevel);
 
   playerList.innerHTML = "";
   players.forEach((p) => {
@@ -226,30 +203,35 @@ function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPl
     playerList.appendChild(li);
   });
 
-  const isSync = currentMode === "sync";
-  consensusSelect.classList.toggle("hidden", !isSync);
-  consensusDescription.classList.toggle("hidden", !isSync);
-  if (isSync) {
-    consensusDescription.textContent = CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || "";
-    consensusButtons.forEach((btn) => {
-      const level = Number(btn.dataset.consensus);
-      const required = CONSENSUS_REQUIRED[level];
-      const unlocked = players.length >= required;
-      btn.disabled = !unlocked || gameInProgress;
-      btn.classList.toggle("active", level === currentConsensusLevel);
-      btn.title = unlocked ? "" : `Needs ${required} players in the room to pick this level`;
-    });
-  }
+  consensusDescription.textContent = CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || "";
+  consensusSelect.classList.remove("hidden");
+  consensusDescription.classList.remove("hidden");
+  consensusButtons.forEach((btn) => {
+    const level = Number(btn.dataset.consensus);
+    const required = CONSENSUS_REQUIRED[level];
+    const unlocked = players.length >= required;
+    btn.disabled = !unlocked || gameInProgress;
+    btn.classList.toggle("active", level === currentConsensusLevel);
+    btn.title = unlocked ? "" : `Needs ${required} players in the room to pick this level`;
+  });
+
+  const enoughToStart = players.length >= minPlayers;
 
   if (gameInProgress) {
     lobbyStatus.textContent = "A game is in progress — you'll be able to ready up once it ends.";
     readyBtn.disabled = true;
-  } else if (players.length < minPlayers) {
+    startNowBtn.classList.add("hidden");
+  } else if (!enoughToStart) {
     lobbyStatus.textContent = `Waiting for at least ${minPlayers} players to join…`;
     readyBtn.disabled = false;
+    startNowBtn.classList.add("hidden");
   } else {
     lobbyStatus.textContent = "";
     readyBtn.disabled = false;
+    // Once enough players are in the room, anyone can start the game even
+    // if someone hasn't (or won't) hit Ready — one holdout shouldn't be
+    // able to block everyone else indefinitely.
+    startNowBtn.classList.remove("hidden");
   }
 }
 
@@ -266,6 +248,10 @@ readyBtn.addEventListener("click", () => {
   iAmReady = !iAmReady;
   readyBtn.textContent = iAmReady ? "Cancel Ready" : "Ready Up";
   api("toggle-ready", { code: currentRoomCode, playerId });
+});
+
+startNowBtn.addEventListener("click", () => {
+  api("force-start", { code: currentRoomCode });
 });
 
 // ---- Game ----
@@ -331,15 +317,14 @@ function bindChannelEvents(ch) {
     showScreen("lobby");
   });
 
-  ch.bind("game-started", ({ mode, consensusLevel, endsAt }) => {
+  ch.bind("game-started", ({ consensusLevel, endsAt }) => {
     showScreen("game");
     guessInput.value = "";
     guessInput.focus();
-    currentMode = mode || currentMode;
     currentConsensusLevel = consensusLevel || currentConsensusLevel;
-    modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
-    scoreboardHint.textContent = SCOREBOARD_HINTS[mode] || "";
-    if (mode === "sync" && endsAt) {
+    modeSmall.textContent = formatModeLabel(currentConsensusLevel);
+    scoreboardHint.textContent = SCOREBOARD_HINT;
+    if (endsAt) {
       startCountdown(endsAt);
     } else {
       stopCountdown();
@@ -377,14 +362,10 @@ function bindChannelEvents(ch) {
     roundFeedback.textContent = `Closest match: ${bestCount}/${required} players — keep typing words until enough match!`;
   });
 
-  ch.bind("game-over", ({ mode, winner, teamScore, scoreboard }) => {
+  ch.bind("game-over", ({ teamScore, scoreboard }) => {
     clearTimeout(roundTimeoutHandle);
     stopCountdown();
-    if (mode === "sync") {
-      gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
-    } else {
-      gameoverWinner.textContent = winner ? `${winner} wins with ${scoreboard[0].score} points!` : "Game over.";
-    }
+    gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
     gameoverScoreboardList.innerHTML = "";
     scoreboard.forEach((p) => {
       const li = document.createElement("li");
