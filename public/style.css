@@ -263,12 +263,16 @@ input::placeholder { color: #6b6690; }
   justify-content: center;
 }
 
-#falling-emoji {
+#falling-emoji, #falling-emoji-2 {
   position: absolute;
   top: -80px;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 64px;
   transition: top linear;
 }
+
+#falling-emoji-2.hidden { display: none; }
 
 #round-feedback {
   position: absolute;

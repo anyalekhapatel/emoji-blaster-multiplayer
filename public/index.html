@@ -18,6 +18,12 @@
 
     <input id="username-input" type="text" placeholder="Your name" maxlength="16" autocomplete="off">
 
+    <p class="hint">Mode (used when you create a room)</p>
+    <div class="button-row" id="mode-select">
+      <button type="button" class="btn btn-mode active" data-mode="sync">Sync<br><span class="mode-desc">One emoji — match its keyword</span></button>
+      <button type="button" class="btn btn-mode" data-mode="double">Double Sync<br><span class="mode-desc">Two emojis — find the keyword they share</span></button>
+    </div>
+
     <div class="button-row">
       <button type="button" id="create-room-btn" class="btn btn-primary">Create Room</button>
     </div>
@@ -64,6 +70,7 @@
 
     <div id="fall-zone">
       <div id="falling-emoji"></div>
+      <div id="falling-emoji-2" class="hidden"></div>
       <div id="round-feedback"></div>
     </div>
 

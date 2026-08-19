@@ -27,4 +27,25 @@ const EMOJI_DB = {
 
 const EMOJI_LIST = Object.keys(EMOJI_DB);
 
-module.exports = { EMOJI_DB, EMOJI_LIST };
+// Keywords that apply to both emojis (case-insensitively deduped, values
+// taken from `a`'s list). Used by Double Sync mode, where a round shows two
+// emojis and the room has to land on a word that fits both.
+function sharedKeywords(a, b) {
+  const setB = new Set((EMOJI_DB[b] || []).map((k) => k.toLowerCase()));
+  return (EMOJI_DB[a] || []).filter((k) => setB.has(k.toLowerCase()));
+}
+
+// Precomputed once at module load (20 emojis = 190 pairs, cheap either way):
+// every emoji pair that actually shares a keyword, so Double Sync can pick a
+// random valid pair directly instead of retrying random picks and hoping.
+const SHARED_PAIRS = [];
+for (let i = 0; i < EMOJI_LIST.length; i++) {
+  for (let j = i + 1; j < EMOJI_LIST.length; j++) {
+    const a = EMOJI_LIST[i];
+    const b = EMOJI_LIST[j];
+    const shared = sharedKeywords(a, b);
+    if (shared.length > 0) SHARED_PAIRS.push({ a, b, shared });
+  }
+}
+
+module.exports = { EMOJI_DB, EMOJI_LIST, sharedKeywords, SHARED_PAIRS };

@@ -63,8 +63,11 @@ const CONSENSUS_DESCRIPTIONS = {
   3: "An emoji clears once at least 4 players enter the same keyword. The room can hold more than 4 — only 4 need to match.",
 };
 
-function formatModeLabel(consensusLevel) {
-  return CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1];
+const MODE_LABELS = { sync: "Sync", double: "Double Sync" };
+
+function formatModeLabel(mode, consensusLevel) {
+  const modeLabel = MODE_LABELS[mode] || MODE_LABELS.sync;
+  return `${modeLabel} — ${CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1]}`;
 }
 
 const SCOREBOARD_HINT = "(shared team score — beat the clock!)";
@@ -92,17 +95,28 @@ function getUsername() {
   return name;
 }
 
+// ---- Mode select (only matters for room creation; joiners inherit the room's mode) ----
+const modeButtons = Array.from(document.querySelectorAll("#mode-select .btn-mode"));
+let selectedMode = "sync";
+
+modeButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    selectedMode = btn.dataset.mode;
+    modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
+  });
+});
+
 createRoomBtn.addEventListener("click", async () => {
   const username = getUsername();
   if (!username) return;
-  const data = await api("create-room", { username, playerId });
+  const data = await api("create-room", { username, mode: selectedMode, playerId });
   if (data.error) {
     landingError.textContent = data.error;
     landingError.classList.remove("hidden");
     return;
   }
   await subscribeToRoom(data.code);
-  enterRoom(data.code, data.consensusLevel);
+  enterRoom(data.code, data.mode, data.consensusLevel);
   startHeartbeat(data.code);
   await resyncFromSnapshot(data.code);
 });
@@ -123,7 +137,7 @@ joinRoomBtn.addEventListener("click", async () => {
     return;
   }
   await subscribeToRoom(data.code);
-  enterRoom(data.code, data.consensusLevel);
+  enterRoom(data.code, data.mode, data.consensusLevel);
   startHeartbeat(data.code);
   await resyncFromSnapshot(data.code);
 });
@@ -165,15 +179,17 @@ const consensusButtons = Array.from(document.querySelectorAll("#consensus-select
 const consensusDescription = document.getElementById("consensus-description");
 
 let currentRoomCode = null;
+let currentMode = "sync";
 let currentConsensusLevel = 1;
 let iAmReady = false;
 
-function enterRoom(code, consensusLevel) {
+function enterRoom(code, mode, consensusLevel) {
   currentRoomCode = code;
+  currentMode = mode || "sync";
   currentConsensusLevel = consensusLevel || 1;
   roomCodeDisplay.textContent = code;
   roomCodeSmall.textContent = code;
-  const label = formatModeLabel(currentConsensusLevel);
+  const label = formatModeLabel(currentMode, currentConsensusLevel);
   lobbyMode.textContent = label;
   modeSmall.textContent = label;
   showScreen("lobby");
@@ -186,9 +202,10 @@ consensusButtons.forEach((btn) => {
   });
 });
 
-function applyLobbyUpdate({ players, consensusLevel, gameInProgress, minPlayers }) {
+function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPlayers }) {
+  currentMode = mode || currentMode;
   currentConsensusLevel = consensusLevel || currentConsensusLevel;
-  lobbyMode.textContent = formatModeLabel(currentConsensusLevel);
+  lobbyMode.textContent = formatModeLabel(currentMode, currentConsensusLevel);
 
   playerList.innerHTML = "";
   players.forEach((p) => {
@@ -256,6 +273,7 @@ startNowBtn.addEventListener("click", () => {
 
 // ---- Game ----
 const fallingEmojiEl = document.getElementById("falling-emoji");
+const fallingEmoji2El = document.getElementById("falling-emoji-2");
 const fallZone = document.getElementById("fall-zone");
 const roundFeedback = document.getElementById("round-feedback");
 const guessInput = document.getElementById("guess-input");
@@ -305,6 +323,19 @@ function armRoundTimeout(fallDurationMs) {
   }, fallDurationMs + 250); // small buffer past the visual fall duration
 }
 
+// Resets one falling-emoji element to the top and animates it down over
+// fallDuration — shared by both slots so Double Sync's two emojis fall in
+// lockstep with Sync's single one.
+function dropEmoji(el, text, fallDuration) {
+  el.textContent = text;
+  el.style.transition = "none";
+  el.style.top = "-80px";
+  // Force reflow so the next transition actually animates from the top.
+  void el.offsetHeight;
+  el.style.transition = `top ${fallDuration}ms linear`;
+  el.style.top = `${fallZone.clientHeight - 20}px`;
+}
+
 function bindChannelEvents(ch) {
   ch.bind("lobby-update", applyLobbyUpdate);
   ch.bind("scoreboard", applyScoreboard);
@@ -317,12 +348,13 @@ function bindChannelEvents(ch) {
     showScreen("lobby");
   });
 
-  ch.bind("game-started", ({ consensusLevel, endsAt }) => {
+  ch.bind("game-started", ({ mode, consensusLevel, endsAt }) => {
     showScreen("game");
     guessInput.value = "";
     guessInput.focus();
+    currentMode = mode || currentMode;
     currentConsensusLevel = consensusLevel || currentConsensusLevel;
-    modeSmall.textContent = formatModeLabel(currentConsensusLevel);
+    modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
     scoreboardHint.textContent = SCOREBOARD_HINT;
     if (endsAt) {
       startCountdown(endsAt);
@@ -333,13 +365,19 @@ function bindChannelEvents(ch) {
 
   ch.bind("emoji-spawn", ({ emoji, fallDuration }) => {
     roundFeedback.textContent = "";
-    fallingEmojiEl.textContent = emoji;
-    fallingEmojiEl.style.transition = "none";
-    fallingEmojiEl.style.top = "-80px";
-    // Force reflow so the next transition actually animates from the top.
-    void fallingEmojiEl.offsetHeight;
-    fallingEmojiEl.style.transition = `top ${fallDuration}ms linear`;
-    fallingEmojiEl.style.top = `${fallZone.clientHeight - 20}px`;
+    const emojis = Array.isArray(emoji) ? emoji : [emoji];
+
+    dropEmoji(fallingEmojiEl, emojis[0], fallDuration);
+    if (emojis.length > 1) {
+      fallingEmojiEl.style.left = "30%";
+      fallingEmoji2El.classList.remove("hidden");
+      fallingEmoji2El.style.left = "70%";
+      dropEmoji(fallingEmoji2El, emojis[1], fallDuration);
+    } else {
+      fallingEmojiEl.style.left = "50%";
+      fallingEmoji2El.classList.add("hidden");
+    }
+
     guessInput.value = "";
     guessInput.focus();
     armRoundTimeout(fallDuration);

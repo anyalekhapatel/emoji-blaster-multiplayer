@@ -18,14 +18,14 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { username, playerId } = req.body || {};
+  const { username, mode, playerId } = req.body || {};
   if (!username || !playerId) {
     res.status(400).json({ error: "username and playerId are required" });
     return;
   }
 
   const code = await generateRoomCode();
-  const room = createRoomState(code, 1);
+  const room = createRoomState(code, mode, 1);
   addPlayer(room, playerId, username);
   await saveRoom(code, room);
 
@@ -36,6 +36,7 @@ module.exports = async (req, res) => {
 
   res.status(200).json({
     code,
+    mode: room.mode,
     consensusLevel: room.consensusLevel,
     consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel],
   });

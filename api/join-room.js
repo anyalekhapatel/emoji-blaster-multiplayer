@@ -33,6 +33,7 @@ module.exports = async (req, res) => {
 
   res.status(200).json({
     code,
+    mode: room.mode,
     consensusLevel: room.consensusLevel,
     consensusRequired: CONSENSUS_REQUIRED[room.consensusLevel],
   });
