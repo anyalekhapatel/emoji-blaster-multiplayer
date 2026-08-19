@@ -18,13 +18,29 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { username, mode, playerId } = req.body || {};
+  const { username, mode, playerId, code: requestedCode } = req.body || {};
   if (!username || !playerId) {
     res.status(400).json({ error: "username and playerId are required" });
     return;
   }
 
-  const code = await generateRoomCode();
+  // An explicit code (from the QMoji 2.0 homescreen's party room) lets every
+  // player who launched Blaster from the same arcade party land in the same
+  // room automatically, instead of the host having to share a second,
+  // Blaster-specific code -- same contract as the room-reuse pattern the
+  // sibling games (Moji Mojo, Emoji Muncher) already use. Falls back to a
+  // fresh random code for a room created the normal, standalone way.
+  let code;
+  if (requestedCode) {
+    const normalized = String(requestedCode).toUpperCase().trim();
+    if (await getRoom(normalized)) {
+      res.status(409).json({ error: "Room already exists" });
+      return;
+    }
+    code = normalized;
+  } else {
+    code = await generateRoomCode();
+  }
   const room = createRoomState(code, mode, 1);
   addPlayer(room, playerId, username);
   await saveRoom(code, room);

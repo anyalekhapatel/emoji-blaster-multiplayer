@@ -4,6 +4,8 @@
 // event binding. See lib/game-logic.js and the /api handlers for the
 // server-side half of each of these.
 
+applyStaticTranslations();
+
 const PLAYER_ID_KEY = "emoji-blaster-player-id";
 function getPlayerId() {
   let id = sessionStorage.getItem(PLAYER_ID_KEY);
@@ -13,6 +15,18 @@ function getPlayerId() {
   }
   return id;
 }
+
+// A player arriving from the QMoji 2.0 homescreen already has an arcade
+// identity (?player=) -- adopt it as this game's own id too, before
+// getPlayerId() below would otherwise mint an unrelated random one. Read
+// synchronously off the URL (not via arcade-client.js's async initArcade())
+// so it's in place before the very first getPlayerId() call, a few lines
+// down, ever runs.
+(function adoptArcadePlayerId() {
+  const fromUrl = new URLSearchParams(location.search).get("player");
+  if (fromUrl) sessionStorage.setItem(PLAYER_ID_KEY, fromUrl);
+})();
+
 const playerId = getPlayerId();
 
 async function api(path, body) {
@@ -52,25 +66,24 @@ const screens = {
 const CONSENSUS_REQUIRED = { 1: 2, 2: 3, 3: 4 };
 
 const CONSENSUS_LABELS = {
-  1: "Level 1 — Two-Player Match",
-  2: "Level 2 — Three-Player Match",
-  3: "Level 3 — Four-Player Match",
+  1: () => t("consensus_label_level1"),
+  2: () => t("consensus_label_level2"),
+  3: () => t("consensus_label_level3"),
 };
 
 const CONSENSUS_DESCRIPTIONS = {
-  1: "An emoji clears once at least 2 players enter the same keyword. The room can hold more than 2 — only 2 need to match.",
-  2: "An emoji clears once at least 3 players independently enter the same keyword. The room can hold more than 3 — only 3 need to match.",
-  3: "An emoji clears once at least 4 players enter the same keyword. The room can hold more than 4 — only 4 need to match.",
+  1: () => t("consensus_desc_level1"),
+  2: () => t("consensus_desc_level2"),
+  3: () => t("consensus_desc_level3"),
 };
 
-const MODE_LABELS = { sync: "Sync", double: "Double Sync" };
+const MODE_LABELS = { sync: () => t("mode_label_sync"), double: () => t("mode_label_double") };
 
 function formatModeLabel(mode, consensusLevel) {
-  const modeLabel = MODE_LABELS[mode] || MODE_LABELS.sync;
-  return `${modeLabel} — ${CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1]}`;
+  const modeLabel = (MODE_LABELS[mode] || MODE_LABELS.sync)();
+  const consensusLabel = (CONSENSUS_LABELS[consensusLevel] || CONSENSUS_LABELS[1])();
+  return `${modeLabel} — ${consensusLabel}`;
 }
-
-const SCOREBOARD_HINT = "(shared team score — beat the clock!)";
 
 function showScreen(name) {
   Object.values(screens).forEach((s) => s.classList.add("hidden"));
@@ -87,7 +100,7 @@ const landingError = document.getElementById("landing-error");
 function getUsername() {
   const name = usernameInput.value.trim();
   if (!name) {
-    landingError.textContent = "Enter a name first.";
+    landingError.textContent = t("name_required_error");
     landingError.classList.remove("hidden");
     return null;
   }
@@ -106,6 +119,15 @@ modeButtons.forEach((btn) => {
   });
 });
 
+// Common tail end of create/join: subscribe to the room's live channel,
+// switch to the lobby, and start keeping presence/state fresh.
+async function enterRoomFully(data) {
+  await subscribeToRoom(data.code);
+  enterRoom(data.code, data.mode, data.consensusLevel);
+  startHeartbeat(data.code);
+  await resyncFromSnapshot(data.code);
+}
+
 createRoomBtn.addEventListener("click", async () => {
   const username = getUsername();
   if (!username) return;
@@ -115,10 +137,7 @@ createRoomBtn.addEventListener("click", async () => {
     landingError.classList.remove("hidden");
     return;
   }
-  await subscribeToRoom(data.code);
-  enterRoom(data.code, data.mode, data.consensusLevel);
-  startHeartbeat(data.code);
-  await resyncFromSnapshot(data.code);
+  await enterRoomFully(data);
 });
 
 joinRoomBtn.addEventListener("click", async () => {
@@ -126,7 +145,7 @@ joinRoomBtn.addEventListener("click", async () => {
   if (!username) return;
   const code = joinCodeInput.value.trim().toUpperCase();
   if (!code) {
-    landingError.textContent = "Enter a room code.";
+    landingError.textContent = t("room_code_required_error");
     landingError.classList.remove("hidden");
     return;
   }
@@ -136,11 +155,72 @@ joinRoomBtn.addEventListener("click", async () => {
     landingError.classList.remove("hidden");
     return;
   }
-  await subscribeToRoom(data.code);
-  enterRoom(data.code, data.mode, data.consensusLevel);
-  startHeartbeat(data.code);
-  await resyncFromSnapshot(data.code);
+  await enterRoomFully(data);
 });
+
+// ---- QMoji Arcade: party continuity from the homescreen ----
+// Enhancement only -- if there's no ?room= or the lookup fails, none of this
+// runs and the landing screen above behaves exactly as it does standalone.
+// Mirrors emoji-survey-scramble's and emoji-munchers' identical pattern:
+// a known party member skips the manual name/create/join screen entirely,
+// reusing the arcade party's own room code as this game's room code too (so
+// everyone who launched Blaster from the same party lands in the same room
+// without a second code to share) -- try joining a room already opened
+// under that code first, and only seed a fresh one under it if nobody has.
+function navigateWithLoadingScreen(href) {
+  const loadingScreen = document.getElementById("loadingScreen");
+  const fill = document.getElementById("loadingBarFill");
+  if (!loadingScreen || !fill) {
+    window.location.href = href;
+    return;
+  }
+  loadingScreen.classList.add("is-visible");
+  loadingScreen.setAttribute("aria-hidden", "false");
+  fill.style.width = "0%";
+  requestAnimationFrame(() => { fill.style.width = "100%"; });
+  setTimeout(() => { window.location.href = href; }, 650);
+}
+
+const backToLaunchpadBtn = document.getElementById("backToLaunchpadBtn");
+let arcadeRoomCode = null;
+let arcadeLang = null;
+let arcadeUiLang = null;
+let arcadePlayerId = null;
+
+backToLaunchpadBtn.addEventListener("click", () => {
+  navigateWithLoadingScreen(QMojiArcade.backToHomescreenUrl(arcadeRoomCode, arcadeLang, arcadePlayerId, arcadeUiLang));
+});
+
+(async function initArcadeLink() {
+  const arcade = await QMojiArcade.initArcade();
+  if (!arcade) return;
+  arcadeRoomCode = arcade.roomCode;
+  arcadeLang = arcade.lang;
+  arcadeUiLang = arcade.uiLang;
+  arcadePlayerId = arcade.playerId;
+
+  const me = (arcade.room.players || []).find((p) => p.playerId === arcadePlayerId);
+  if (!me) {
+    // A raw game link was opened directly (not routed through the
+    // homescreen) -- just enroll whoever joins into the arcade party too.
+    joinRoomBtn.addEventListener("click", () => {
+      const name = usernameInput.value.trim();
+      if (name) QMojiArcade.joinRoom(arcadeRoomCode, name).catch(() => {});
+    });
+    return;
+  }
+
+  // Known party member -- skip the manual entry screen entirely.
+  usernameInput.value = me.name;
+  const joinData = await api("join-room", { code: arcadeRoomCode, username: me.name, playerId });
+  if (!joinData.error) {
+    await enterRoomFully(joinData);
+    return;
+  }
+  const createData = await api("create-room", { username: me.name, mode: selectedMode, playerId, code: arcadeRoomCode });
+  if (createData.error) return; // arcade layer is an enhancement -- leave the standalone landing screen up
+  await enterRoomFully(createData);
+})();
 
 // ---- Heartbeat (replaces socket.io's connection/disconnect signal) ----
 let heartbeatInterval = null;
@@ -214,13 +294,13 @@ function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPl
     name.textContent = p.username;
     const badge = document.createElement("span");
     badge.className = "ready-badge" + (p.ready ? " ready" : "");
-    badge.textContent = p.ready ? "Ready" : "Not ready";
+    badge.textContent = p.ready ? t("ready_badge") : t("not_ready_badge");
     li.appendChild(name);
     li.appendChild(badge);
     playerList.appendChild(li);
   });
 
-  consensusDescription.textContent = CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || "";
+  consensusDescription.textContent = (CONSENSUS_DESCRIPTIONS[currentConsensusLevel] || CONSENSUS_DESCRIPTIONS[1])();
   consensusSelect.classList.remove("hidden");
   consensusDescription.classList.remove("hidden");
   consensusButtons.forEach((btn) => {
@@ -229,17 +309,17 @@ function applyLobbyUpdate({ players, mode, consensusLevel, gameInProgress, minPl
     const unlocked = players.length >= required;
     btn.disabled = !unlocked || gameInProgress;
     btn.classList.toggle("active", level === currentConsensusLevel);
-    btn.title = unlocked ? "" : `Needs ${required} players in the room to pick this level`;
+    btn.title = unlocked ? "" : t("consensus_locked_hint", { required });
   });
 
   const enoughToStart = players.length >= minPlayers;
 
   if (gameInProgress) {
-    lobbyStatus.textContent = "A game is in progress — you'll be able to ready up once it ends.";
+    lobbyStatus.textContent = t("lobby_status_in_progress");
     readyBtn.disabled = true;
     startNowBtn.classList.add("hidden");
   } else if (!enoughToStart) {
-    lobbyStatus.textContent = `Waiting for at least ${minPlayers} players to join…`;
+    lobbyStatus.textContent = t("lobby_status_waiting_min", { min: minPlayers });
     readyBtn.disabled = false;
     startNowBtn.classList.add("hidden");
   } else {
@@ -263,7 +343,7 @@ function applyScoreboard(entries) {
 
 readyBtn.addEventListener("click", () => {
   iAmReady = !iAmReady;
-  readyBtn.textContent = iAmReady ? "Cancel Ready" : "Ready Up";
+  readyBtn.textContent = iAmReady ? t("cancel_ready_button") : t("ready_up_button");
   api("toggle-ready", { code: currentRoomCode, playerId });
 });
 
@@ -342,7 +422,7 @@ function bindChannelEvents(ch) {
 
   ch.bind("room-reset", () => {
     iAmReady = false;
-    readyBtn.textContent = "Ready Up";
+    readyBtn.textContent = t("ready_up_button");
     stopCountdown();
     clearTimeout(roundTimeoutHandle);
     showScreen("lobby");
@@ -355,7 +435,7 @@ function bindChannelEvents(ch) {
     currentMode = mode || currentMode;
     currentConsensusLevel = consensusLevel || currentConsensusLevel;
     modeSmall.textContent = formatModeLabel(currentMode, currentConsensusLevel);
-    scoreboardHint.textContent = SCOREBOARD_HINT;
+    scoreboardHint.textContent = t("scoreboard_hint");
     if (endsAt) {
       startCountdown(endsAt);
     } else {
@@ -385,25 +465,25 @@ function bindChannelEvents(ch) {
 
   ch.bind("emoji-correct", ({ username, guess }) => {
     clearTimeout(roundTimeoutHandle);
-    roundFeedback.textContent = `${username} got it! ("${guess}")`;
+    roundFeedback.textContent = t("emoji_correct", { username, guess });
   });
 
   ch.bind("emoji-miss", () => {
     clearTimeout(roundTimeoutHandle);
-    roundFeedback.textContent = "Missed it — next one incoming…";
+    roundFeedback.textContent = t("emoji_miss");
   });
 
   // Never reveals which word anyone typed — just how close the room is to
   // consensus (best overlap so far vs. how many are needed), so guessing
   // stays private until the room actually lands on a shared word.
   ch.bind("sync-progress", ({ bestCount, required }) => {
-    roundFeedback.textContent = `Closest match: ${bestCount}/${required} players — keep typing words until enough match!`;
+    roundFeedback.textContent = t("sync_progress", { bestCount, required });
   });
 
   ch.bind("game-over", ({ teamScore, scoreboard }) => {
     clearTimeout(roundTimeoutHandle);
     stopCountdown();
-    gameoverWinner.textContent = `Time's up! Your team synced ${teamScore} emoji together.`;
+    gameoverWinner.textContent = t("game_over_summary", { teamScore });
     gameoverScoreboardList.innerHTML = "";
     scoreboard.forEach((p) => {
       const li = document.createElement("li");
