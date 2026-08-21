@@ -34,7 +34,7 @@ module.exports = async (req, res) => {
   let result = null;
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
     const expectedVersion = room.version;
-    const candidate = handleSubmitGuess(room, playerId, guess);
+    const candidate = await handleSubmitGuess(room, playerId, guess);
     const saved = await saveRoomCAS(code, room, expectedVersion);
 
     if (saved) {

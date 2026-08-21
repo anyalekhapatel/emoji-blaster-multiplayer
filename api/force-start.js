@@ -21,9 +21,9 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { room, result } = await updateRoom(code, (r) => {
+  const { room, result } = await updateRoom(code, async (r) => {
     const removed = pruneStalePlayers(r);
-    const { ok, events } = forceStartGame(r);
+    const { ok, events } = await forceStartGame(r);
     return removed.length > 0
       ? { ok, events: [{ name: "lobby-update", data: lobbyPayload(r) }, { name: "scoreboard", data: getScoreboard(r) }, ...events] }
       : { ok, events };

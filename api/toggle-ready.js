@@ -15,9 +15,9 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { room, result: events } = await updateRoom(code, (r) => {
+  const { room, result: events } = await updateRoom(code, async (r) => {
     const removed = pruneStalePlayers(r);
-    const readyEvents = toggleReady(r, playerId);
+    const readyEvents = await toggleReady(r, playerId);
     return removed.length > 0
       ? [{ name: "lobby-update", data: lobbyPayload(r) }, { name: "scoreboard", data: getScoreboard(r) }, ...readyEvents]
       : readyEvents;

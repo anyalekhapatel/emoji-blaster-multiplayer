@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { room, result } = await updateRoom(code, (r) => {
+  const { room, result } = await updateRoom(code, async (r) => {
     if (r.players[playerId]) r.players[playerId].lastSeenAt = Date.now();
 
     const removed = pruneStalePlayers(r);
@@ -33,7 +33,7 @@ module.exports = async (req, res) => {
       { name: "lobby-update", data: lobbyPayload(r) },
       { name: "scoreboard", data: getScoreboard(r) },
     ];
-    if (!r.started && allPlayersReady(r)) events.push(...startGame(r));
+    if (!r.started && allPlayersReady(r)) events.push(...(await startGame(r)));
     return { events };
   });
 
