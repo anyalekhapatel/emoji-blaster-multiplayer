@@ -2,8 +2,11 @@
   "framework": null,
   "buildCommand": null,
   "functions": {
-    "api/*.js": {
+    "api/**/*.js": {
       "maxDuration": 15
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/arcade-api/v1/:path*", "destination": "/api/arcade-api/v1/:path*" }
+  ]
 }
